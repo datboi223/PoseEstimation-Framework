@@ -9,7 +9,8 @@
 
 # Partially taken from here (functionality/execution of cosypose)
 # https://github.com/ylabbe/cosypose/issues/17 <- Look at the code
-# New additions: putting everything inside a class and some other new methods
+# New additions: putting everything inside a class and some other new methods to
+#                make it usable over ROS.
 
 import os
 import sys
@@ -63,11 +64,11 @@ from cosypose.utils.distributed import init_distributed_mode
 from cosypose.config import EXP_DIR, RESULTS_DIR
 
 # From Notebook
-from cosypose.rendering.bullet_scene_renderer import BulletSceneRenderer
-from cosypose.visualization.singleview import render_prediction_wrt_camera
-from cosypose.visualization.plotter import Plotter
-from bokeh.io import export_png
-from bokeh.plotting import gridplot
+# from cosypose.rendering.bullet_scene_renderer import BulletSceneRenderer
+# from cosypose.visualization.singleview import render_prediction_wrt_camera
+# from cosypose.visualization.plotter import Plotter
+# from bokeh.io import export_png
+# from bokeh.plotting import gridplot
 
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
@@ -79,11 +80,11 @@ import run_pose_estimation as pe
 
 # TODO: adaption of the code to be used in class instead of separate functions
 class Cosypose(pe.PoseEstimator):
-    def __init__(self, parameters: dict):
+    def __init__(self, parameters):
         super().__init__(parameters)
         self.im = None
         self.camera_info = None
-        self.model_type = parameters['model_type']  # TODO
+        self.model_type = self.parameters['model_type']
         self.detector, self.pose_predictor = self.getModel(self.model_type)
         self.bridge = CvBridge()
 
@@ -105,7 +106,8 @@ class Cosypose(pe.PoseEstimator):
 
 
     def initialize_publisher(self):
-        pass
+        ''' for Publishing the estimated transformation '''
+        self.pose_publisher = tf.TransformBroadcaster()
 
     def preprocess(self, data: dict, parameters: dict):
         ''' Preprocessing of the data gotten (if needed) '''
@@ -128,6 +130,7 @@ class Cosypose(pe.PoseEstimator):
             self.im = cv_rgb_image.copy()
             self.camera_info = camera_message
 
+    # TODO: used in __init__
     def load_detector(self, run_id):
         ''' TODO: replace as much as possible with the preloaded parameters '''
 
@@ -145,6 +148,7 @@ class Cosypose(pe.PoseEstimator):
         model = Detector(model)
         return model
 
+    # TODO: used in __init__
     def load_pose_models(self, coarse_run_id, refiner_run_id=None, n_workers=8):
         ''' TODO: replace as much as possible with the preloaded parameters '''
 
@@ -181,12 +185,13 @@ class Cosypose(pe.PoseEstimator):
         model = CoarseRefinePosePredictor(coarse_model=coarse_model, refiner_model=refiner_model)
         return model, mesh_db
 
+    # TODO: used in __init__
     def getModel(self, model_type):
-        #load models
+        # load models
         if model_type == 'tless':
-            detector_run_id='detector-bop-tless-pbr--873074'
-            coarse_run_id='coarse-bop-tless-pbr--506801'
-            refiner_run_id='refiner-bop-tless-pbr--233420'
+            detector_run_id = self.parameters['run_ids']['detector'] # 'detector-bop-tless-pbr--873074'
+            coarse_run_id = self.parameters['run_ids']['coarse']     # 'coarse-bop-tless-pbr--506801'
+            refiner_run_id = self.parameters['run_ids']['refiner']   # 'refiner-bop-tless-pbr--233420'
             detector = self.load_detector(detector_run_id)
             pose_predictor, mesh_db = self.load_pose_models(coarse_run_id=coarse_run_id,
                                                             refiner_run_id=refiner_run_id,
@@ -194,15 +199,16 @@ class Cosypose(pe.PoseEstimator):
             return detector, pose_predictor
 
         if model_type == 'ycb':
-            detector_run_id = 'detector-bop-ycbv-pbr--970850'
-            coarse_run_id = 'coarse-bop-ycbv-pbr--724183'
-            refiner_run_id = 'refiner-bop-ycbv-pbr--604090'
+            detector_run_id = self.parameters['run_ids']['detector'] # 'detector-bop-ycbv-pbr--970850'
+            coarse_run_id = self.parameters['run_ids']['coarse']     # 'coarse-bop-ycbv-pbr--724183'
+            refiner_run_id = self.parameters['run_ids']['refiner']   # 'refiner-bop-ycbv-pbr--604090'
             detector = self.load_detector(detector_run_id)
             pose_predictor, mesh_db = self.load_pose_models(coarse_run_id=coarse_run_id,
                                                             refiner_run_id=refiner_run_id,
                                                             n_workers=4)
             return detector, pose_predictor
 
+    # TODO: used in evaluate()
     def inference(self, detector, pose_predictor, image, camera_k):
         # [1,540,720,3]->[1,3,540,720]
         images = torch.from_numpy(image).cuda().float().unsqueeze_(0)
@@ -216,7 +222,7 @@ class Cosypose(pe.PoseEstimator):
                                                  detection_th=0.8,
                                                  output_masks=False,
                                                  mask_th=0.9)
-        # pose esitimition
+        # pose estimation
         if len(box_detections) == 0:
             return None
         # print("start estimate pose.")
@@ -225,11 +231,42 @@ class Cosypose(pe.PoseEstimator):
                                                                 detections=box_detections,
                                                                 n_coarse_iterations=1,
                                                                 n_refiner_iterations=4)
-        # print("inference successfully.")
         # result: this_batch_detections, final_preds
         return final_preds.cpu(), box_detections
 
-    def evaluate(self) -> dict:
+    def evaluate(self):
+        with lock:
+            if self.im is None:  # No data received
+                return
+            im_color = self.im.copy()
+            camera_info = self.camera_msg
+
+        H, W, _ = im_color.shape
+        input_dim = (W, H)
+        camera_K = np.array(camera_info.K).reshape(3, 3)
+        pred, detections = self.inference(detector=self.detector,
+                                          pose_predictor=self.pose_predictor,
+                                          image=im_color, camera_k=camera_K)
+
+        # Print the predictions
+        print('n = ', self.n)
+        print("num of pred:", len(pred))
+        for i in range(len(pred)):
+            print("object ", i, ":", pred.infos.iloc[i].label, "------\n  pose:",
+                  pred.poses[i].numpy(), "\n  detection score:", pred.infos.iloc[i].score)
+
+        # t = ...
+        # R = ...
+        # ros_time = rospy.Time.now()
+
+        # br.sendTransform(translation=(msg.x, msg.y, 0),
+        #                  rotation=tf.transformations.quaternion_from_euler(0, 0, msg.theta),
+        #                  time=rospy.Time.now(),
+        #                  child=...,
+        #                  parent=...)
+        # self.pose_publisher.sendTransform()
+
         self.n += 1
-        print('Cosypose -> Evaluate: ' + str(self.n))
-        return dict()
+
+
+

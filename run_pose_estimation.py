@@ -38,22 +38,22 @@ class PoseEstimator:
         # to call each specific class of preprocessing -> make it more general
         pass
 
-    def initialize_subscriber(self) -> None:
+    def initialize_subscriber(self):
         pass
     
-    def initialize_publisher(self) -> None:
+    def initialize_publisher(self):
         pass
 
-    def preprocess(self, data: dict, parameters: dict):
+    def preprocess(self, data, parameters):
         pass
 
-    def callback(self, data: dict):
+    def callback(self, data):
         pass
 
     def evaluate(self):
         pass
 
-def PoseEstimatorFactory(estimator : str, parameter : dict):
+def PoseEstimatorFactory(estimator, parameter):
     '''Factory to get the specified Estimator-Class'''
 
     # imports placed here to avoid circular
