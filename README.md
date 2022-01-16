@@ -12,5 +12,11 @@ export COSYPOSE_HOME=/path/to/cosypose/
 export POSERBPF_HOME=/path/to/poserbpf/
 ```
 
-### TODO: execution of cosypose-Part
+To execute the a specific approach for Pose-Estimation you have to specify name of the approach and a valid config for that approach. 
+### Execution of cosypose-Approach
+```bash
+ python3 run_pose_estimation.py --estimator cosypose --param <path-to-config>.json
+```
+Currently available configs are for [YCB](pose_estimators/cosypose_estimator/cfg/ycb_config.json) and [T-Less](pose_estimators/cosypose_estimator/cfg/tless_config.json). These configs specify the parameters to use in the different parts of `cosypose`.
+
 ### TODO: execution of PoseRBPF-Part
