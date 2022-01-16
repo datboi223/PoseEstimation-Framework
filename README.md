@@ -19,4 +19,8 @@ To execute the a specific approach for Pose-Estimation you have to specify name 
 ```
 Currently available configs are for [YCB](pose_estimators/cosypose_estimator/cfg/ycb_config.json) and [T-Less](pose_estimators/cosypose_estimator/cfg/tless_config.json). These configs specify the parameters to use in the different parts of `cosypose`.
 
-### TODO: execution of PoseRBPF-Part
+### Execution of PoseRBPF-Approach
+```bash
+ python3 run_pose_estimation.py --estimator PoseRBPF --param <path-to-config>.json
+```
+___TODO:___ To be integrated.
