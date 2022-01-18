@@ -16,6 +16,7 @@ import os
 import sys
 import json
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches # for geometric shapes
 from PIL import Image
 import numpy as np
 from copy import deepcopy
@@ -32,6 +33,8 @@ from sensor_msgs.msg import Image, CameraInfo
 import message_filters
 from cv_bridge import CvBridge, CvBridgeError
 import tf
+import geometry_msgs.msg
+
 
 # importing the cosypose-"backend"
 sys.path.append(os.environ['COSYPOSE_HOME'])
@@ -78,6 +81,87 @@ torch.backends.cudnn.benchmark = False
 sys.path.insert(0, os.environ['EST_HOME'])
 import run_pose_estimation as pe
 
+
+def show_bbox_prediction(img, bbox):
+    print('bbox = ', bbox.shape)
+    bbox_np = np.array(bbox.detach().cpu()).reshape(-1, 2, 2)
+    print('bbox(np) = ', bbox_np.shape)
+
+    plt.imshow(img)
+    ax = plt.gca()
+
+    num_boxes = len(bbox_np)
+    for i in range(num_boxes):
+        pos = bbox_np[i]
+        xmin = np.min(pos[1])
+        xmax = np.max(pos[1])
+        ymin = np.min(pos[0])
+        ymax = np.max(pos[0])
+
+        dx = xmax - xmin
+        dy = ymax - ymin
+        rect = patches.Rectangle(xy=(xmin, ymin), width=dx, height=dy,
+                                 linewidth=2,
+                                 edgecolor='red',
+                                 fill=False)
+    ax.add_patch(rect)
+    del ax
+    plt.pause(0.001)
+
+# Code By: Pavel Krsek
+# taken from: http://people.ciirc.cvut.cz/~krsek/Teaching/NPGR001_ARO/Euler_angles.pdf
+def rot2euler(R):
+    eps = 1e-7
+    if (abs(R[2, 2]) - 1) > eps:
+        theta =  np.arccos(R[2, 2])
+        phi = np.arctan2(R[1, 2], R[0, 2])
+        psi = np.arctan2(R[2, 1], -R[2, 0])
+        theta2 = 2 * np.pi - np.arccos(R[2, 2])
+        phi2 = np.arctan2(-R[1, 2], -R[0, 2])
+        psi2 = np.arctan2(-R[2, 2], R[2, 0])
+        eul = np.array([[phi, theta, psi], [phi2, theta2, psi2]])
+    else:
+        if R[2, 2] > 0:
+            theta = 0
+            phi = np.arctan2(R[1, 0], R[0, 0])
+            eul = np.array([[phi, theta, 0.0], [phi, theta, 0.0]])
+        else:
+            theta = np.pi
+            phi = np.arctan2(-R[1, 0], -R[0, 0])
+            eul = np.array([[phi, theta, 0.0], [phi, theta, 0.0]])
+        return eul
+
+
+def generate_tf_msg(t, R, child_frame, frame):
+    euler_angles = rot2euler(R)[0, :]
+    angle1, angle2, angle3 = euler_angles
+    quat = tf.transformations.quaternion_from_euler(angle1, angle2, angle3)
+
+    tf_msg = geometry_msgs.msg.TransformStamped()
+
+    tf_msg.header.frame_id = '/world'
+    tf_msg.header.stamp = rospy.Time.now()
+    tf_msg.child_frame_id = 'pose_frame'
+    tf_msg.transform.translation.x = t[0]
+    tf_msg.transform.translation.y = t[0]
+    tf_msg.transform.translation.z = t[0]
+
+    tf_msg.transform.rotation.x = quat[0]
+    tf_msg.transform.rotation.y = quat[1]
+    tf_msg.transform.rotation.z = quat[2]
+    tf_msg.transform.rotation.w = quat[3]
+
+    tfm = tf.msg.tfMessage([tf_msg])
+
+    return tfm
+
+    # self.pose_publisher.sendTransform(translation=t,
+    #                                   rotation=tf.transformations.quaternion_from_euler(angle1, angle2, angle3),
+    #                                   time=rospy.Time.now(),
+    #                                   child='pose_frame',
+    #                                   parent='/world')
+
+
 # TODO: adaption of the code to be used in class instead of separate functions
 class Cosypose(pe.PoseEstimator):
     def __init__(self, parameters):
@@ -87,6 +171,9 @@ class Cosypose(pe.PoseEstimator):
         self.model_type = self.parameters['model_type']
         self.detector, self.pose_predictor = self.getModel(self.model_type)
         self.bridge = CvBridge()
+
+        # Init. of publisher
+        self.pose_publisher = tf.TransformBroadcaster()
 
         # initialization of relevant subscribers (only) for cosypose
         self.rgb_sub = message_filters.Subscriber('/camera/color/image_raw', Image, queue_size=1)  # 10
@@ -105,9 +192,9 @@ class Cosypose(pe.PoseEstimator):
     #
 
 
-    def initialize_publisher(self):
-        ''' for Publishing the estimated transformation '''
-        self.pose_publisher = tf.TransformBroadcaster()
+    # def initialize_publisher(self):
+    #     ''' for Publishing the estimated transformation '''
+    #     pass
 
     def preprocess(self, data: dict, parameters: dict):
         ''' Preprocessing of the data gotten (if needed) '''
@@ -222,31 +309,38 @@ class Cosypose(pe.PoseEstimator):
                                                  detection_th=0.8,
                                                  output_masks=False,
                                                  mask_th=0.9)
+        print('#Predictions: ', len(box_detections))
         # pose estimation
         if len(box_detections) == 0:
-            return None
+            return None, None
         # print("start estimate pose.")
         final_preds, all_preds = pose_predictor.get_predictions(images,
                                                                 cameras_k,
                                                                 detections=box_detections,
-                                                                n_coarse_iterations=1,
+                                                                n_coarse_iterations=4,
                                                                 n_refiner_iterations=4)
         # result: this_batch_detections, final_preds
         return final_preds.cpu(), box_detections
 
     def evaluate(self):
         with lock:
-            if self.im is None:  # No data received
+            if self.im is None or self.camera_info is None:  # No data received
                 return
             im_color = self.im.copy()
-            camera_info = self.camera_msg
+            camera_info = self.camera_info
 
         H, W, _ = im_color.shape
         input_dim = (W, H)
         camera_K = np.array(camera_info.K).reshape(3, 3)
+        print('im_color = ', type(im_color), im_color.shape)
+        print('camera_K = ', type(camera_K), camera_K.shape)
         pred, detections = self.inference(detector=self.detector,
                                           pose_predictor=self.pose_predictor,
                                           image=im_color, camera_k=camera_K)
+
+        # end current iteration, if there was nothing detected (pred and/or detections == None)
+        if pred is None or detections is None:
+            return
 
         # Print the predictions
         print('n = ', self.n)
@@ -255,18 +349,24 @@ class Cosypose(pe.PoseEstimator):
             print("object ", i, ":", pred.infos.iloc[i].label, "------\n  pose:",
                   pred.poses[i].numpy(), "\n  detection score:", pred.infos.iloc[i].score)
 
-        # t = ...
-        # R = ...
-        # ros_time = rospy.Time.now()
+        pose = pred.poses[0].numpy()
+        R = pose[:3, :3].astype(np.float32)
+        t = pose[:3, -1].astype(np.float32).tolist()
+        t_ = tuple(t)
 
-        # br.sendTransform(translation=(msg.x, msg.y, 0),
-        #                  rotation=tf.transformations.quaternion_from_euler(0, 0, msg.theta),
-        #                  time=rospy.Time.now(),
-        #                  child=...,
-        #                  parent=...)
-        # self.pose_publisher.sendTransform()
+        euler = rot2euler(R)[0]
+        angle1 = float(euler[0])
+        angle2 = float(euler[1])
+        angle3 = float(euler[2])
+        print('Euler: \n', euler)
+
+        self.pose_publisher.sendTransform(translation=(t_[0], t_[1], t_[2]),
+                                          rotation=tf.transformations.quaternion_from_euler(angle1, angle2, angle3),
+                                          time=rospy.Time.now(),
+                                          child='pose_frame',
+                                          parent='/world')
+
+
+        # show_bbox_prediction(im_color, detections.tensors['bboxes'])
 
         self.n += 1
-
-
-

@@ -15,6 +15,7 @@ import tf
 
 def load_config(file):
     if not os.path.exists(file): # to be removed in final version (for testing)
+        print('Config does not exist: ', file)
         return dict()
     else: # load data
         with open(file, 'r') as json_file:
@@ -47,8 +48,8 @@ class PoseEstimator:
     def preprocess(self, data, parameters):
         pass
 
-    def callback(self, data):
-        pass
+    # def callback(self, data):
+    #     pass
 
     def evaluate(self):
         pass
