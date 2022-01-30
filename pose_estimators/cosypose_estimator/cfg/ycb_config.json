@@ -1,8 +1,0 @@
-{
-  "model_type": "ycb",
-  "run_ids": {
-    "detector": "detector-bop-ycbv-pbr--970850",
-    "coarse": "coarse-bop-ycbv-pbr--724183",
-    "refiner": "refiner-bop-ycbv-pbr--604090"
-  }
-}
