@@ -1,0 +1,8 @@
+{
+    "model_type": "tless",
+    "run_ids": {
+      "detector": "detector-bop-tless-pbr--873074",
+      "coarse": "coarse-bop-tless-pbr--506801",
+      "refiner": "refiner-bop-tless-pbr--233420"
+    }
+  } 
