@@ -27,6 +27,10 @@ import torch
 import threading
 lock = threading.Lock()
 
+# for easy Rotaton -> Quaternion transformation
+from scipy.spatial.transform import Rotation as Rot
+
+
 # ROS Imports
 import roslib, rospy
 from std_msgs.msg import String
@@ -35,6 +39,7 @@ import message_filters
 from cv_bridge import CvBridge, CvBridgeError
 import tf
 import geometry_msgs.msg
+from geometry_msgs.msg import Pose, PoseArray
 
 
 # importing the cosypose-"backend"
@@ -161,6 +166,36 @@ def generate_tf_msg(t, R, child_frame, frame):
     #                                   child='pose_frame',
     #                                   parent='/world')
 
+# Example from: https://github.com/team-vigir/vigir_rviz/blob/master/src/test/posearray.py
+def generate_pose_array(predictions):
+
+    poses = PoseArray()
+    poses.header.frame_id = 'camera_link'
+    poses.header.stamp = rospy.Time.now()
+
+    for pred in predictions:
+        t = pred[:3, 3]
+        R = pred[:3, :3]
+
+        r = Rot.from_matrix(R)
+        q = r.as_quat()
+
+        pose = Pose()
+        pose.position.x = t[0]
+        pose.position.y = t[1]
+        pose.position.z = t[2]
+
+        pose.orientation.x = q[0]
+        pose.orientation.y = q[1]
+        pose.orientation.z = q[2]
+        pose.orientation.w = q[3]
+
+        poses.append(pose)
+
+
+    return poses
+
+
 
 # TODO: adaption of the code to be used in class instead of separate functions
 class Cosypose(pe.PoseEstimator):
@@ -174,7 +209,9 @@ class Cosypose(pe.PoseEstimator):
         self.renderer = BulletSceneRenderer(urdf_ds='ycbv')
 
         # Init. of publisher
-        self.pose_publisher = tf.TransformBroadcaster()
+        # self.pose_publisher = tf.TransformBroadcaster()
+        self.pose_publisher = rospy.Publisher('ycb_poses', PoseArray)
+
 
         # initialization of relevant subscribers (only) for cosypose
         self.rgb_sub = message_filters.Subscriber('/camera/color/image_raw', Image, queue_size=10)  # 10
@@ -356,6 +393,11 @@ class Cosypose(pe.PoseEstimator):
         )
         pred_rendered = render_prediction_wrt_camera(self.renderer, pred, cam)
 
+
+        # publish the poses
+        poses = generate_pose_array(pred)
+
+
         # Print the predictions
         print('n = ', self.n)
         print("num of pred:", len(pred))
@@ -376,11 +418,11 @@ class Cosypose(pe.PoseEstimator):
 
         # TODO: use multiple tf-publisher for multiple classes
         # as seen in other approaches (by Nvidia)
-        self.pose_publisher.sendTransform(translation=(t_[0], t_[1], t_[2]),
-                                          rotation=tf.transformations.quaternion_from_euler(angle1, angle2, angle3),
-                                          time=rospy.Time.now(),
-                                          child='pose_frame',
-                                          parent='camera_link')
+        # self.pose_publisher.sendTransform(translation=(t_[0], t_[1], t_[2]),
+        #                                   rotation=tf.transformations.quaternion_from_euler(angle1, angle2, angle3),
+        #                                   time=rospy.Time.now(),
+        #                                   child='pose_frame',
+        #                                   parent='camera_link')
 
         figures = dict()
         plotter = Plotter()
