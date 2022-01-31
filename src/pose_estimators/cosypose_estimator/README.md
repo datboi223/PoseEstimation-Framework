@@ -3,7 +3,7 @@
 In order to use the __[cosypose](https://github.com/datboi223/cosypose)__-approach for 6D-Pose Estimation you get the code first and install it. This directory utilizes the single-view version of cosypose to estimate the translation and rotaton and rotation, relative to the camera that was used to observe the scene.
 
 ## Installation
-Clone the __[cosypose](https://github.com/datboi223/cosypose)__-repository and follow the instructions below inside the root-folder of that repository
+Clone the __[cosypose](https://github.com/datboi223/cosypose)__-repository witg the first statement below and follow the further instructions inside the root-folder of that repository
 ```bash
 git clone --recurse-submodules https://github.com/datboi223/cosypose.git
 virtualenv -p python3.8 pe_cosypose
@@ -18,13 +18,13 @@ python setup_venv.py install
 python setup_venv.py develop
 ```
 
-For the program [transforms.py](https://github.com/datboi223/cosypose/blob/master/cosypose/lib3d/transform.py) to work, you also have to insall `eigenpy`. 
-For installing eigenpy follow these instructions
+For the program [transforms.py](https://github.com/datboi223/cosypose/blob/master/cosypose/lib3d/transform.py) to work, you also have to insall `eigenpy`, if it is not already installed. 
+For installing `eigenpy` follow these instructions
 ```bash
 sudo sh -c "echo 'deb [arch=amd64] http://robotpkg.openrobots.org/packages/debian/pub $(lsb_release -cs) robotpkg' >> /etc/apt/sources.list.d/robotpkg.list"
 curl http://robotpkg.openrobots.org/packages/debian/robotpkg.key | sudo apt-key add -
 sudo apt update
-sudo apt install robotpkg-py38-eigenpy # installs eigenpy library in /opt/openrobots/ directory
+sudo apt install robotpkg-py38-eigenpy # installs eigenpy library in /opt/openrobots/ directory; change number after 'py' for a scpecific python version
 sudo apt install ros-noetic-eigenpy
 ```
 If you can not run cosypose because of `eigenpy` still not being found, you have to add the directory `/opt/openrobots/lib/` to the `LD_LIBRARY_PATH`
