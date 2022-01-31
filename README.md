@@ -1,5 +1,5 @@
 # ROS-Node for 6D Pose-Estimation
-This repository contains a ROS-Package which currently wraps and utilizes te __[cosypose](https://github.com/datboi223/cosypose)__ 6D Pose-Estimation approach.
+This repository contains a ROS-Package which currently utilizes the __[cosypose](https://github.com/datboi223/cosypose)__ 6D Pose-Estimation approach.
 
 To use the ROS-package and its node `pose_estimation`, please look in the subdirectories of the pose-estimation approach. There you find the install instructions for the mehtod of choice. Currently the usage of [cosypose](src/pose_estimators/cosypose_estimator/README.md) is possible.
 
