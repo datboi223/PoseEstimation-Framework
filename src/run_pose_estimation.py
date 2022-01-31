@@ -3,6 +3,8 @@ import sys
 import json
 import argparse
 
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+
 pose_est_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'pose_estimators')
 sys.path.insert(0, pose_est_path)
 

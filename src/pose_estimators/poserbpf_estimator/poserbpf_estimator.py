@@ -5,8 +5,9 @@ sys.path.insert(0, os.environ['EST_HOME'])
 # from run_pose_estimation import PoseEstimator
 import run_pose_estimation as pe
 
+# TODO:
 # import the importing the PoseRBPF-"backend"
-sys.path.insert(0, os.environ['POSERBPF_HOME'])
+# sys.path.insert(0, os.environ['POSERBPF_HOME'])
 
 class PoseRBPF(pe.PoseEstimator):
     def __init__(self, parameters: dict):

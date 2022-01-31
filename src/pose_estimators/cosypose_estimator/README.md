@@ -15,7 +15,7 @@ git lfs pull
 To finally install cosypose you have to use the following command:
 ```bash
 python setup_venv.py install
-python setup_venv.py devel
+python setup_venv.py develop
 ```
 
 For the program [transforms.py](https://github.com/datboi223/cosypose/blob/master/cosypose/lib3d/transform.py) to work, you also have to insall `eigenpy`. 
@@ -33,13 +33,15 @@ export LD_LIBRARY_PATH=/opt/openrobots/lib/:$LD_LIBRARY_PATH
 ```
 This usually solves the problem.
 
-## Downloading the Data
+## Downloading the Data (YCB-Video)
 
-To use cosypose you also have to download the required data. For this follow the instructions of the cosypose-repository [here](https://github.com/datboi223/cosypose#downloading-and-preparing-data). Follow the download instructions for the __ycb-Data__ starting with the download of the `urdf`-files. 
+To use `cosypose` you also have to download the required data. For this, follow the instructions of the cosypose-repository [here](https://github.com/datboi223/cosypose#downloading-and-preparing-data). You only need to download a part of the `YCB` BOP-Dataset, but not the whole thing, since the provided download-script would download a very large amount of data. Only the data [here](https://drive.google.com/drive/folders/1LemYCKiQgdN6gv16yjs9gfEsNK_s-QJQ) and the corrssponding `URDF`-Files are needed. The aforementioned folder contains the object-models for 20 YCB-Models. Download these files to the `cosypose`-subfolder `/local_data/bop_datasets/ycbv/`. Rename the folder from its original name to `models`. Now follow the download instructions for the `URDF`-files. 
 
-Now you can download the `YCB-V` model-weights for single-view pose estimation [here](https://github.com/datboi223/cosypose#pre-trained-models). Follow the instructions there and download the parameters with the following `model_id`-values
+Now you can download the `YCB-V` model-weights for single-view pose estimation [here](https://github.com/datboi223/cosypose#bop20-models-and-results). Follow the instructions in the __Pre-trained models__-Subsection and download the parameters with the following `model_id`-values 
 - `detector-bop-ycbv-pbr--970850`
 - `coarse-bop-ycbv-pbr--724183`
 - `refiner-bop-ycbv-pbr--604090`
+
+With this you should be ready to go and return to the main __[README](../../../README.md)__
 
 ## TODO: synth+real weights
