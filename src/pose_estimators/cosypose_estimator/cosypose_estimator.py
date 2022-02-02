@@ -15,6 +15,7 @@
 import os
 import sys
 import time
+import signal
 import json
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches # for geometric shapes
@@ -27,19 +28,18 @@ import torch
 import threading
 lock = threading.Lock()
 
-# for easy Rotaton -> Quaternion transformation
-from scipy.spatial.transform import Rotation as Rot
-
-
 # ROS Imports
 import roslib, rospy
-from std_msgs.msg import String
+from std_msgs.msg import String, Header
 from sensor_msgs.msg import Image, CameraInfo
 import message_filters
 from cv_bridge import CvBridge, CvBridgeError
 import tf
 import geometry_msgs.msg
-from geometry_msgs.msg import Pose, PoseArray
+from geometry_msgs.msg import Pose, PoseStamped, PoseArray
+
+
+from scipy.spatial.transform import Rotation as Rot
 
 
 # importing the cosypose-"backend"
@@ -113,89 +113,40 @@ def show_bbox_prediction(img, bbox):
     del ax
     plt.pause(0.001)
 
-# Code By: Pavel Krsek
-# taken from: http://people.ciirc.cvut.cz/~krsek/Teaching/NPGR001_ARO/Euler_angles.pdf
-def rot2euler(R):
-    eps = 1e-7
-    if (abs(R[2, 2]) - 1) > eps:
-        theta =  np.arccos(R[2, 2])
-        phi = np.arctan2(R[1, 2], R[0, 2])
-        psi = np.arctan2(R[2, 1], -R[2, 0])
-        theta2 = 2 * np.pi - np.arccos(R[2, 2])
-        phi2 = np.arctan2(-R[1, 2], -R[0, 2])
-        psi2 = np.arctan2(-R[2, 2], R[2, 0])
-        eul = np.array([[phi, theta, psi], [phi2, theta2, psi2]])
-    else:
-        if R[2, 2] > 0:
-            theta = 0
-            phi = np.arctan2(R[1, 0], R[0, 0])
-            eul = np.array([[phi, theta, 0.0], [phi, theta, 0.0]])
-        else:
-            theta = np.pi
-            phi = np.arctan2(-R[1, 0], -R[0, 0])
-            eul = np.array([[phi, theta, 0.0], [phi, theta, 0.0]])
-        return eul
+def generate_pose_array(poses, header):
 
+    poses_np = poses.cpu().detach().numpy()
+    ps = PoseArray()
+    ps.header.frame_id = "/camera_link"
 
-def generate_tf_msg(t, R, child_frame, frame):
-    euler_angles = rot2euler(R)[0, :]
-    angle1, angle2, angle3 = euler_angles
-    quat = tf.transformations.quaternion_from_euler(angle1, angle2, angle3)
+    for i, pose_np in enumerate(poses_np):
+        print(i, ' - \n', pose_np)
+        # p = PoseStamped()
+        p = Pose()
+        # p.header = header
+        t = pose_np[:3, -1]
+        r = Rot.from_matrix(pose_np[:3, :3])
+        q = r.as_quat()  # Rotation as quaternion
 
-    tf_msg = geometry_msgs.msg.TransformStamped()
+        p.position.x = t[0]
+        p.position.y = t[1]
+        p.position.z = t[2]
+        p.orientation.x = q[0]
+        p.orientation.y = q[1]
+        p.orientation.z = q[2]
+        p.orientation.w = q[3]
 
-    tf_msg.header.frame_id = '/world'
-    tf_msg.header.stamp = rospy.Time.now()
-    tf_msg.child_frame_id = 'pose_frame'
-    tf_msg.transform.translation.x = t[0]
-    tf_msg.transform.translation.y = t[0]
-    tf_msg.transform.translation.z = t[0]
+        # p.pose.position.x = t[0]
+        # p.pose.position.y = t[1]
+        # p.pose.position.z = t[2]
+        # p.pose.orientation.x = q[0]
+        # p.pose.orientation.y = q[1]
+        # p.pose.orientation.z = q[2]
+        # p.pose.orientation.w = q[3]
+        print(p)
+        ps.poses.append(p)
 
-    tf_msg.transform.rotation.x = quat[0]
-    tf_msg.transform.rotation.y = quat[1]
-    tf_msg.transform.rotation.z = quat[2]
-    tf_msg.transform.rotation.w = quat[3]
-
-    tfm = tf.msg.tfMessage([tf_msg])
-
-    return tfm
-
-    # self.pose_publisher.sendTransform(translation=t,
-    #                                   rotation=tf.transformations.quaternion_from_euler(angle1, angle2, angle3),
-    #                                   time=rospy.Time.now(),
-    #                                   child='pose_frame',
-    #                                   parent='/world')
-
-# Example from: https://github.com/team-vigir/vigir_rviz/blob/master/src/test/posearray.py
-def generate_pose_array(predictions):
-
-    poses = PoseArray()
-    poses.header.frame_id = 'camera_link'
-    poses.header.stamp = rospy.Time.now()
-
-    for pred in predictions:
-        t = pred[:3, 3]
-        R = pred[:3, :3]
-
-        r = Rot.from_matrix(R)
-        q = r.as_quat()
-
-        pose = Pose()
-        pose.position.x = t[0]
-        pose.position.y = t[1]
-        pose.position.z = t[2]
-
-        pose.orientation.x = q[0]
-        pose.orientation.y = q[1]
-        pose.orientation.z = q[2]
-        pose.orientation.w = q[3]
-
-        poses.append(pose)
-
-
-    return poses
-
-
+    return ps
 
 # TODO: adaption of the code to be used in class instead of separate functions
 class Cosypose(pe.PoseEstimator):
@@ -205,13 +156,14 @@ class Cosypose(pe.PoseEstimator):
         self.camera_info = None
         self.model_type = self.parameters['model_type']
         self.detector, self.pose_predictor = self.getModel(self.model_type)
+
         self.bridge = CvBridge()
         self.renderer = BulletSceneRenderer(urdf_ds='ycbv')
 
         # Init. of publisher
         # self.pose_publisher = tf.TransformBroadcaster()
-        self.pose_publisher = rospy.Publisher('ycb_poses', PoseArray)
-
+        self.object_class_pub = rospy.Publisher('/object_classes', String, queue_size=1)
+        self.pose_array_pub = rospy.Publisher('/object_poses', PoseArray, queue_size=1)
 
         # initialization of relevant subscribers (only) for cosypose
         self.rgb_sub = message_filters.Subscriber('/camera/color/image_raw', Image, queue_size=10)  # 10
@@ -330,7 +282,7 @@ class Cosypose(pe.PoseEstimator):
             detector = self.load_detector(detector_run_id)
             pose_predictor, mesh_db = self.load_pose_models(coarse_run_id=coarse_run_id,
                                                             refiner_run_id=refiner_run_id,
-                                                            n_workers=4)
+                                                            n_workers=1)
             return detector, pose_predictor
 
     # TODO: used in evaluate()
@@ -361,90 +313,89 @@ class Cosypose(pe.PoseEstimator):
         return final_preds.cpu(), box_detections
 
     def evaluate(self):
-        with lock:
-            if self.im is None or self.camera_info is None:  # No data received
+        try:
+            with lock:
+                if self.im is None or self.camera_info is None:  # No data received
+                    return
+                im_color = self.im.copy()
+                camera_info = self.camera_info
+
+            H, W, _ = im_color.shape
+            input_dim = (W, H)
+            camera_K = np.array(camera_info.K).reshape(3, 3)
+            print('im_color = ', type(im_color), im_color.shape)
+            print('camera_K = ', type(camera_K), camera_K.shape)
+
+            start = time.time()
+            pred, detections = self.inference(detector=self.detector,
+                                              pose_predictor=self.pose_predictor,
+                                              image=im_color, camera_k=camera_K)
+            end = time.time()
+            print('Inference Time: {:.3f} s'.format(end - start))
+            # print('pred = ', pred)
+            # print('detections = ', detections)
+
+            # end current iteration, if there was nothing detected (pred and/or detections == None)
+            if pred is None or detections is None:
                 return
-            im_color = self.im.copy()
-            camera_info = self.camera_info
 
-        H, W, _ = im_color.shape
-        input_dim = (W, H)
-        camera_K = np.array(camera_info.K).reshape(3, 3)
-        print('im_color = ', type(im_color), im_color.shape)
-        print('camera_K = ', type(camera_K), camera_K.shape)
+            cam = dict(
+                resolution=input_dim,
+                K=camera_K,
+                TWC=np.eye(4)
+            )
+            pred_rendered = render_prediction_wrt_camera(self.renderer, pred, cam)
 
-        start = time.time()
-        pred, detections = self.inference(detector=self.detector,
-                                          pose_predictor=self.pose_predictor,
-                                          image=im_color, camera_k=camera_K)
-        end = time.time()
-        print('Inference Time: {:.3f} s'.format(end - start))
-        # print('pred = ', pred)
-        # print('detections = ', detections)
+            # Print the predictions
+            print('n = ', self.n)
+            print("num of pred:", len(pred))
+            for i in range(len(pred)):
+                print("object ", i, ":", pred.infos.iloc[i].label, "------\n  pose:",
+                      pred.poses[i].numpy(), "\n  detection score:", pred.infos.iloc[i].score)
 
-        # end current iteration, if there was nothing detected (pred and/or detections == None)
-        if pred is None or detections is None:
-            return
+            # print('Pred\n', pred, type(pred))
+            # print('Detections\n', detections.infos['label'], type(detections.infos['label']))
+            msg_header = Header()
+            msg_header.stamp = rospy.Time.now()
+            msg_header.frame_id = 'measured/camera_link'
+            poses = generate_pose_array(pred.poses, msg_header)
+            poses.header = msg_header
+            self.pose_array_pub.publish(poses)
 
-        cam = dict(
-            resolution=input_dim,
-            K=camera_K,
-            TWC=np.eye(4)
-        )
-        pred_rendered = render_prediction_wrt_camera(self.renderer, pred, cam)
+            pred_classes = detections.infos['label'].tolist()
+            pred_classes_str = ','.join(pred_classes)
+            self.object_class_pub.publish(pred_classes_str)
+            # print('pred_classes_str = ', pred_classes_str)
+
+            figures = dict()
+            plotter = Plotter()
+
+            figures['input_im'] = plotter.plot_image(im_color)
+            img_det = plotter.plot_image(im_color)
+            figures['detections'] = plotter.plot_maskrcnn_bboxes(img_det, detections)
+            figures['pred_rendered'] = plotter.plot_image(pred_rendered)
+            figures['pred_overlay'] = plotter.plot_overlay(im_color, pred_rendered)
+            fig_array = [figures['input_im'], figures['detections'], figures['pred_rendered'], figures['pred_overlay']]
+            # fig_array = [figures['input_im'], figures['detections']]
+
+            # continue
+
+            res = gridplot(fig_array, ncols=2)
+            print(type(res))
+            out_png = os.path.join(os.environ['HOME'], 'Desktop', 'out', str(self.n) + '_result.png')
+            try:
+                export_png(res, filename=out_png)
+                pass
+            except Exception as e:
+                print('Error: ', e)
+            # show_bbox_prediction(im_color, detections.tensors['bboxes'])
+            # if self.n > 10:
+            #     raise Exception('ITS TIME TO STOP!')
+
+            self.n += 1
+
+        except KeyboardInterrupt:
+            print('Ending it all!')
+            raise Exception('ITS TIME TO STOP!')
 
 
-        # publish the poses
-        poses = generate_pose_array(pred)
-
-
-        # Print the predictions
-        print('n = ', self.n)
-        print("num of pred:", len(pred))
-        for i in range(len(pred)):
-            print("object ", i, ":", pred.infos.iloc[i].label, "------\n  pose:",
-                  pred.poses[i].numpy(), "\n  detection score:", pred.infos.iloc[i].score)
-
-        pose = pred.poses[0].numpy()
-        R = pose[:3, :3].astype(np.float32)
-        t = pose[:3, -1].astype(np.float32).tolist()
-        t_ = tuple(t)
-
-        euler = rot2euler(R)[0]
-        angle1 = float(euler[0])
-        angle2 = float(euler[1])
-        angle3 = float(euler[2])
-        print('Euler: \n', euler)
-
-        # TODO: use multiple tf-publisher for multiple classes
-        # as seen in other approaches (by Nvidia)
-        # self.pose_publisher.sendTransform(translation=(t_[0], t_[1], t_[2]),
-        #                                   rotation=tf.transformations.quaternion_from_euler(angle1, angle2, angle3),
-        #                                   time=rospy.Time.now(),
-        #                                   child='pose_frame',
-        #                                   parent='camera_link')
-
-        figures = dict()
-        plotter = Plotter()
-
-        figures['input_im'] = plotter.plot_image(im_color)
-        img_det = plotter.plot_image(im_color)
-        figures['detections'] = plotter.plot_maskrcnn_bboxes(img_det, detections)
-        print('--->>>', type(figures['input_im']))
-        print('npp', np.array(img_det))
-        print('IN_IMG = ', np.array(figures['input_im']))
-        figures['pred_rendered'] = plotter.plot_image(pred_rendered)
-        figures['pred_overlay'] = plotter.plot_overlay(im_color, pred_rendered)
-        fig_array = [figures['input_im'], figures['detections'], figures['pred_rendered'], figures['pred_overlay']]
-        # fig_array = [figures['input_im'], figures['detections']]
-
-        # continue
-
-        res = gridplot(fig_array, ncols=2)
-        print(type(res))
-        out_png = os.path.join(os.environ['HOME'], 'Desktop', 'out', str(self.n) + '_result.png')
-        export_png(res, filename=out_png)
-
-        # show_bbox_prediction(im_color, detections.tensors['bboxes'])
-
-        self.n += 1

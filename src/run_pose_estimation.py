@@ -2,6 +2,8 @@ import os
 import sys
 import json
 import argparse
+import signal
+import time
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
@@ -103,5 +105,9 @@ if __name__ == '__main__':
         try:
             pose_estimator.evaluate()
         except Exception as e:
-            print('Program stopped!')
+            print('Program stopped! -> ', e)
+            ps = os.getpgid(0)
+            os.killpg(ps, signal.SIGTERM)
+            time.sleep(3)
+            os.killpg(ps, signal.SIGKILL)
             exit(-1)
