@@ -1,0 +1,14 @@
+{
+  "posecnn": {
+    "gpu_id": 0,
+    "instance_id": 0,
+    "pretrained": "checkpoints/posecnn/vgg16_ycb_object_self_supervision_all_epoch_8.checkpoint.pth",
+      "cfg_file": "config/posecnn/ycb_object_subset_realsense.yml",
+    "dataset_name": "ycb_object_test",
+    "randomize": false,
+    "network_name": "posecnn",
+    "background_name": null
+  },
+
+  "poserbpf": {}
+}

@@ -9,10 +9,17 @@
 
 import os
 import sys
+import json
 # include the home-path to access the base-class
 sys.path.insert(0, os.environ['EST_HOME'])
 # from run_pose_estimation import PoseEstimator
 import run_pose_estimation as pe
+
+# TODO:
+# import the importing the PoseRBPF-"backend"
+sys.path.insert(0, os.environ['POSERBPF_HOME'])
+print('POSERBPF_HOME = ', sys.path[0])
+
 
 import rospy
 import tf
@@ -22,7 +29,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
-import pprint
+from pprint import pprint
 import threading
 import sys
 import posecnn_cuda
@@ -32,7 +39,7 @@ import networks
 # from Queue import Queue
 from cv_bridge import CvBridge, CvBridgeError
 from std_msgs.msg import String
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image as ROS_Image
 from sensor_msgs.msg import CameraInfo
 from sensor_msgs.msg import JointState
 from transforms3d.quaternions import mat2quat, quat2mat, qmult
@@ -42,7 +49,15 @@ from geometry_msgs.msg import PoseStamped, PoseArray
 from visualization_msgs.msg import MarkerArray, Marker
 from rospy.numpy_msg import numpy_msg
 import matplotlib.pyplot as plt
-from config.config import cfg, cfg_from_file
+# import config.config_posecnn as config_posecnn
+# print(config_posecnn)
+# from config.config_posecnn import cfg
+import config.config_posecnn
+# from config.config import cfg_from_file as cfg_from_file_
+
+print(config.config_posecnn.cfg)
+# from config_posecnn import cfg, cfg_from_file # cfg_from_file # important for PoseCNN
+# import config.config_posecnn.cfg_from_file as cfg_from_file_posecnn
 from datasets.factory import get_dataset
 from utils.nms import nms
 from utils.cython_bbox import bbox_overlaps
@@ -61,9 +76,16 @@ from random import shuffle
 import tf.transformations as tra
 import time
 
-# TODO:
-# import the importing the PoseRBPF-"backend"
-# sys.path.insert(0, os.environ['POSERBPF_HOME'])
+def load_config(file):
+    if not os.path.exists(file): # to be removed in final version (for testing)
+        print('Config does not exist: ', file)
+        return dict()
+    else: # load data
+        with open(file, 'r') as json_file:
+            data = json.load(json_file)
+            assert(type(data) == dict)
+        return data
+
 
 def ros_qt_to_rt(rot, trans):
     qt = np.zeros((4,), dtype=np.float32)
@@ -94,12 +116,26 @@ def get_relative_pose_from_tf(listener, source_frame, target_frame):
 '''PoseRBPF similar to ImageListener from PoseRBPF'''
 
 class Poserbpf(pe.PoseEstimator):
-    def __init__(self, parameters: dict):
+    def __init__(self, parameters):
+        parameter_path = os.path.join(os.path.dirname(__file__), parameters)
+        parameters = load_config(parameter_path)
         super().__init__(parameters)
         # parameters similar to args (contains also cfg)
 
         ### PoseCNN ###
         posecnn_parameters = parameters['posecnn']
+        poserbpf_parameters = parameters['poserbpf']
+        # self.file_path = os.path.abspath(__file__)
+        self.file_path = os.path.abspath(os.path.dirname(__file__))
+        print('self.file_path = ', self.file_path)
+
+        # self.posecnn = None
+        self.posecnn_suffix = None
+        self.posecnn_prefix = None
+        self.posecnn_cfg = None
+        self.posecnn_posecnn_network = None
+        self.posecnn_listener = None
+
         self.initialize_poscnn(posecnn_parameters)
 
         self.cv_bridge = CvBridge()
@@ -109,107 +145,114 @@ class Poserbpf(pe.PoseEstimator):
         self.rgb_frame_id = None
         self.rgb_frame_stamp = None
 
-        suffix = '_%02d' % (cfg.instance_id)
-        prefix = '%02d_' % (cfg.instance_id)
-        self.posecnn.suffix = suffix
-        self.posecnn.prefix = prefix
+        suffix = '_%02d' % (self.posecnn_cfg.instance_id)
+        prefix = '%02d_' % (self.posecnn_cfg.instance_id)
+        self.posecnn_suffix = suffix
+        self.posecnn_prefix = prefix
 
 
     def initialize_poscnn(self, posecnn_parameters):
         # load config
+        for k, v  in posecnn_parameters.items():
+            print('{} -> {}'.format(k, v))
+
+        print('Check Paths: ')
+
         if posecnn_parameters['cfg_file'] is not None:
-            cfg_from_file(posecnn_parameters['cfg_file'])
+            cfg_path = os.path.join(self.file_path, posecnn_parameters['cfg_file'])
+            # cfg_from_file(cfg_path)
+            config.config_posecnn.cfg_from_file(cfg_path)
         print('Using config:')
-        pprint.pprint(cfg)
-        self.posecnn.cfg = cfg # make config part of the class itself
+        pprint(config.config_posecnn.cfg)
+        self.posecnn_cfg = config.config_posecnn.cfg # make config part of the class itself
 
         if not posecnn_parameters['randomize']:
             # fix the random seeds (numpy and caffe) for reproducibility
-            np.random.seed(self.posecnn.cfg.RNG_SEED)
+            np.random.seed(self.posecnn_cfg.RNG_SEED)
 
         # device
-        self.posecnn.cfg.gpu_id = 0
-        self.posecnn.cfg.device = torch.device('cuda:{:d}'.format(self.posecnn.cfg.gpu_id))
-        self.posecnn.cfg.instance_id = posecnn_parameters['instance_id']
+        self.posecnn_cfg.gpu_id = 0
+        self.posecnn_cfg.device = torch.device('cuda:{:d}'.format(self.posecnn_cfg.gpu_id))
+        self.posecnn_cfg.instance_id = posecnn_parameters['instance_id']
 
         # dataset
-        self.posecnn.cfg.MODE = 'TEST'
-        dataset = get_dataset(posecnn_parameters['dataset_name'])
+        self.posecnn_cfg.MODE = 'TEST'
+        self.posecnn_dataset = get_dataset(posecnn_parameters['dataset_name'])
 
         # prepare network
         if posecnn_parameters['pretrained']:
-            network_data = torch.load(posecnn_parameters['pretrained'])
+            pretrained_path = os.path.join(os.path.dirname(__file__), posecnn_parameters['pretrained'])
+            network_data = torch.load(pretrained_path)
             print("=> using pre-trained network '{}'".format(posecnn_parameters['pretrained']))
         else:
             network_data = None
             print("no pretrained network specified")
             sys.exit()
-        
-        self.posecnn.posecnn_network = networks.__dict__[posecnn_parameters['network']](dataset.num_classes, 
-                                                                           self.posecnn.cfg.TRAIN.NUM_UNITS, 
-                                                                           network_data).cuda(device=self.posecnn.cfg.device)
-        self.posecnn.posecnn_network = torch.nn.DataParallel(self.posecnn.posecnn_network, device_ids=[0]).cuda(device=self.posecnn.cfg.device)
-        cudnn.benchmark = True
 
-        self.posecnn.posecnn_network.eval()
+        self.posecnn_network = networks.__dict__[posecnn_parameters['network_name']](self.posecnn_dataset.num_classes, self.posecnn_cfg.TRAIN.NUM_UNITS, network_data).cuda(device=self.posecnn_cfg.device)
+        self.posecnn_network = torch.nn.DataParallel(self.posecnn_network, device_ids=[0]).cuda(device=self.posecnn_cfg.device)
+        cudnn.benchmark = True
+        self.posecnn_network.eval()
+
+        self.posecnn_net = self.posecnn_network
 
         # initialize
-        self.posecnn.listener = tf.TransformListener()
-        self.posecnn.br = tf.TransformBroadcaster()
-        self.posecnn.label_pub = rospy.Publisher('posecnn_label', Image, queue_size=10)
-        self.posecnn.rgb_pub = rospy.Publisher('posecnn_rgb', Image, queue_size=10)
-        self.posecnn.depth_pub = rospy.Publisher('posecnn_depth', Image, queue_size=10)
-        self.posecnn.posecnn_pub = rospy.Publisher('posecnn_detection', Image, queue_size=10)
+        self.posecnn_listener = tf.TransformListener()
+        self.posecnn_br = tf.TransformBroadcaster()
+        self.posecnn_label_pub = rospy.Publisher('posecnn_label', ROS_Image, queue_size=10)
+        self.posecnn_rgb_pub = rospy.Publisher('posecnn_rgb', ROS_Image, queue_size=10)
+        self.posecnn_depth_pub = rospy.Publisher('posecnn_depth', ROS_Image, queue_size=10)
+        self.posecnn_pub = rospy.Publisher('posecnn_detection', ROS_Image, queue_size=10)
+        self.test_pub = rospy.Publisher('/test_string', String, queue_size=10)
 
         # create pose publisher for each known object class
         self.pubs = []
-        for i in range(1, self.dataset.num_classes):
-            if self.dataset.classes[i][3] == '_':
-                cls = self.dataset.classes[i][4:]
+        for i in range(1, self.posecnn_dataset.num_classes):
+            if self.posecnn_dataset.classes[i][3] == '_':
+                cls = self.posecnn_dataset.classes[i][4:]
             else:
-                cls = self.dataset.classes[i]
+                cls = self.posecnn_dataset.classes[i]
             self.pubs.append(rospy.Publisher('/objects/prior_pose/' + cls, PoseStamped, queue_size=10))
 
         
         print('***PoseCNN ready, waiting for camera images***')
-        if cfg.TEST.ROS_CAMERA == 'D415':
+        if self.posecnn_cfg.TEST.ROS_CAMERA == 'D415':
             # use RealSense D415
             # self.base_frame = 'measured/base_link'
-            self.base_frame = 'measured/camera_link'
-            rgb_sub = message_filters.Subscriber('/camera/color/image_raw', Image, queue_size=10)
-            depth_sub = message_filters.Subscriber('/camera/aligned_depth_to_color/image_raw', Image, queue_size=10)
+            self.base_frame = 'camera_link'
+            rgb_sub = message_filters.Subscriber('/camera/color/image_raw', ROS_Image, queue_size=10)
+            depth_sub = message_filters.Subscriber('/camera/aligned_depth_to_color/image_raw', ROS_Image, queue_size=10)
             msg = rospy.wait_for_message('/camera/color/camera_info', CameraInfo)
-            self.camera_frame = 'measured/camera_color_optical_frame'
+            # self.camera_frame = 'measured/camera_color_optical_frame'
+            self.camera_frame = 'camera_color_optical_frame'
             self.target_frame = self.base_frame
             self.viz_pub = rospy.Publisher('/obj/mask_estimates/realsense', MarkerArray, queue_size=1)
-        '''
-        elif cfg.TEST.ROS_CAMERA == 'Azure':
+        elif self.posecnn_cfg.TEST.ROS_CAMERA == 'Azure':
             # use RealSense Azure
             self.base_frame = 'measured/base_link'
-            rgb_sub = message_filters.Subscriber('/k4a/rgb/image_raw', Image, queue_size=10)
-            depth_sub = message_filters.Subscriber('/k4a/depth_to_rgb/image_raw', Image, queue_size=10)
+            rgb_sub = message_filters.Subscriber('/k4a/rgb/image_raw', ROS_Image, queue_size=10)
+            depth_sub = message_filters.Subscriber('/k4a/depth_to_rgb/image_raw', ROS_Image, queue_size=10)
             msg = rospy.wait_for_message('/k4a/rgb/camera_info', CameraInfo)
             self.camera_frame = 'rgb_camera_link'
             self.target_frame = self.base_frame
             self.viz_pub = rospy.Publisher('/obj/mask_estimates/azure', MarkerArray, queue_size=1)
         else:
             # use kinect
-            self.base_frame = '%s_rgb_optical_frame' % (cfg.TEST.ROS_CAMERA)
-            rgb_sub = message_filters.Subscriber('/%s/rgb/image_color' % (cfg.TEST.ROS_CAMERA), Image, queue_size=10)
-            depth_sub = message_filters.Subscriber('/%s/depth_registered/image' % (cfg.TEST.ROS_CAMERA), Image, queue_size=10)
-            msg = rospy.wait_for_message('/%s/rgb/camera_info' % (cfg.TEST.ROS_CAMERA), CameraInfo)
-            self.camera_frame = '%s_rgb_optical_frame' % (cfg.TEST.ROS_CAMERA)
+            self.base_frame = '%s_rgb_optical_frame' % (self.posecnn_cfg.TEST.ROS_CAMERA)
+            rgb_sub = message_filters.Subscriber('/%s/rgb/image_color' % (self.posecnn_cfg.TEST.ROS_CAMERA), ROS_Image, queue_size=10)
+            depth_sub = message_filters.Subscriber('/%s/depth_registered/image' % (self.posecnn_cfg.TEST.ROS_CAMERA), ROS_Image, queue_size=10)
+            msg = rospy.wait_for_message('/%s/rgb/camera_info' % (self.posecnn_cfg.TEST.ROS_CAMERA), CameraInfo)
+            self.camera_frame = '%s_rgb_optical_frame' % (self.posecnn_cfg.TEST.ROS_CAMERA)
             self.target_frame = self.base_frame
-            self.viz_pub = rospy.Publisher('/obj/mask_estimates/%s' % (cfg.TEST.ROS_CAMERA), MarkerArray, queue_size=1)
-        '''
+            self.viz_pub = rospy.Publisher('/obj/mask_estimates/%s' % (self.posecnn_cfg.TEST.ROS_CAMERA), MarkerArray, queue_size=1)
 
         # camera to base transformation
         self.Tbc_now = np.eye(4, dtype=np.float32)
 
         # update camera intrinsics (one times)
         K = np.array(msg.K).reshape(3, 3)
-        dataset._intrinsic_matrix = K
-        print(dataset._intrinsic_matrix)
+        self.posecnn_dataset._intrinsic_matrix = K
+        print(self.posecnn_dataset._intrinsic_matrix)
 
         # wait for the rgbd-data
         queue_size = 1
@@ -218,9 +261,9 @@ class Poserbpf(pe.PoseEstimator):
         ts.registerCallback(self.callback)
 
         ## use fake label blob
-        num_classes = dataset.num_classes
-        height = cfg.TRAIN.SYN_HEIGHT
-        width = cfg.TRAIN.SYN_WIDTH
+        num_classes = self.posecnn_dataset.num_classes
+        height = self.posecnn_cfg.TRAIN.SYN_HEIGHT
+        width = self.posecnn_cfg.TRAIN.SYN_WIDTH
         label_blob = np.zeros((1, num_classes, height, width), dtype=np.float32)
         pose_blob = np.zeros((1, num_classes, 9), dtype=np.float32)
         gt_boxes = np.zeros((1, num_classes, 5), dtype=np.float32)
@@ -235,11 +278,11 @@ class Poserbpf(pe.PoseEstimator):
 
         self.label_blob = torch.from_numpy(label_blob).cuda()
         self.meta_data_blob = torch.from_numpy(meta_data_blob).cuda()
-        self.extents_blob = torch.from_numpy(dataset._extents).cuda()
+        self.extents_blob = torch.from_numpy(self.posecnn_dataset._extents).cuda()
         self.gt_boxes_blob = torch.from_numpy(gt_boxes).cuda()
         self.poses_blob = torch.from_numpy(pose_blob).cuda()
-        self.points_blob = torch.from_numpy(dataset._point_blob).cuda()
-        self.symmetry_blob = torch.from_numpy(dataset._symmetry).cuda()
+        self.points_blob = torch.from_numpy(self.posecnn_dataset._point_blob).cuda()
+        self.symmetry_blob = torch.from_numpy(self.posecnn_dataset._symmetry).cuda()
 
 
 
@@ -257,9 +300,9 @@ class Poserbpf(pe.PoseEstimator):
         ''' Preprocessing of the data gotten (if needed) '''
         return data
 
-    def callback(self, rgb, depth,):
-        self.Tbc_now, self.Tbc_stamp = get_relative_pose_from_tf(self.posecnn.listener, 
-                                                                 self.camera_frame, self.base_frame)
+    def callback(self, rgb, depth):
+        # self.Tbc_now, self.Tbc_stamp = get_relative_pose_from_tf(self.posecnn.listener,
+        #                                                          self.camera_frame, self.base_frame)
         if depth.encoding == '32FC1':
             depth_cv = self.cv_bridge.imgmsg_to_cv2(depth)
         elif depth.encoding == '16UC1':
@@ -273,8 +316,8 @@ class Poserbpf(pe.PoseEstimator):
         im = self.cv_bridge.imgmsg_to_cv2(rgb, 'bgr8')
 
         # rescale image if necessary
-        if cfg.TEST.SCALES_BASE[0] != 1:
-            im_scale = cfg.TEST.SCALES_BASE[0]
+        if self.posecnn_cfg.TEST.SCALES_BASE[0] != 1:
+            im_scale = self.posecnn_cfg.TEST.SCALES_BASE[0]
             im = pad_im(cv2.resize(im, None, None, fx=im_scale, fy=im_scale, interpolation=cv2.INTER_LINEAR), 16)
             depth_cv = pad_im(cv2.resize(depth_cv, None, None, fx=im_scale, fy=im_scale, interpolation=cv2.INTER_NEAREST), 16)
 
@@ -291,18 +334,19 @@ class Poserbpf(pe.PoseEstimator):
         with lock:
             if self.im is None:
                 return
+
             im_color = self.im.copy()
             depth_cv = self.depth.copy()
             rgb_frame_id = self.rgb_frame_id
             rgb_frame_stamp = self.rgb_frame_stamp
-            input_Tbc = self.Tbc_now.copy()
-            input_Tbc_stamp = self.Tbc_stamp
+            # input_Tbc = self.Tbc_now.copy()
+            # input_Tbc_stamp = self.Tbc_stamp
 
         print('===========================================')
         
         # compute image blob
         im = im_color.astype(np.float32, copy=True)
-        im -= cfg.PIXEL_MEANS
+        im -= self.posecnn_cfg.PIXEL_MEANS
         height = im.shape[0]
         width = im.shape[1]
         im = np.transpose(im / 255.0, (2, 0, 1))
@@ -310,14 +354,14 @@ class Poserbpf(pe.PoseEstimator):
         inputs = torch.from_numpy(im).cuda()
 
         # tranform to gpu
-        Tbc = torch.from_numpy(input_Tbc).cuda().float()
+        # Tbc = torch.from_numpy(input_Tbc).cuda().float()
 
         # backproject depth
         depth = torch.from_numpy(depth_cv).cuda()
-        fx = self.dataset._intrinsic_matrix[0, 0]
-        fy = self.dataset._intrinsic_matrix[1, 1]
-        px = self.dataset._intrinsic_matrix[0, 2]
-        py = self.dataset._intrinsic_matrix[1, 2]
+        fx = self.posecnn_dataset._intrinsic_matrix[0, 0]
+        fy = self.posecnn_dataset._intrinsic_matrix[1, 1]
+        px = self.posecnn_dataset._intrinsic_matrix[0, 2]
+        py = self.posecnn_dataset._intrinsic_matrix[1, 2]
         im_pcloud = posecnn_cuda.backproject_forward(fx, fy, px, py, depth)[0]
 
         # compare the depth
@@ -326,23 +370,19 @@ class Poserbpf(pe.PoseEstimator):
         mask_depth_valid = torch.isfinite(depth_meas_roi)
 
         # forward
-        cfg.TRAIN.POSE_REG = False
-        out_label, out_vertex, rois, out_pose = self.net(inputs, 
-                                                         self.label_blob, 
-                                                         self.meta_data_blob, 
-                                                         self.extents_blob, 
-                                                         self.gt_boxes_blob, 
-                                                         self.poses_blob, 
-                                                         self.points_blob, 
-                                                         self.symmetry_blob)
+        self.posecnn_cfg.TRAIN.POSE_REG = False
+        out_label, out_vertex, rois, out_pose = self.posecnn_net(inputs, self.label_blob,  self.meta_data_blob,
+                                                                 self.extents_blob, self.gt_boxes_blob,
+                                                                 self.poses_blob, self.points_blob,
+                                                                 self.symmetry_blob)
 
         label_tensor = out_label[0]
         labels = label_tensor.detach().cpu().numpy()
-        print('labels = ', labels.shape)
+        # print('labels = ', labels.shape)
 
         # filter out detections
         rois = rois.detach().cpu().numpy()
-        index = np.where(rois[:, -1] > cfg.TEST.DET_THRESHOLD)[0]
+        index = np.where(rois[:, -1] > self.posecnn_cfg.TEST.DET_THRESHOLD)[0]
         rois = rois[index, :]
 
         # non-maximum suppression within class
@@ -350,7 +390,7 @@ class Poserbpf(pe.PoseEstimator):
         rois = rois[index, :]
 
         # render output image
-        im_label = render_image_detection(self.dataset, im_color, rois, labels)
+        im_label = render_image_detection(self.posecnn_dataset, im_color, rois, labels)
         rgb_msg = self.cv_bridge.cv2_to_imgmsg(im_label, 'rgb8')
         rgb_msg.header.stamp = rgb_frame_stamp
         rgb_msg.header.frame_id = rgb_frame_id
@@ -361,12 +401,16 @@ class Poserbpf(pe.PoseEstimator):
         label_msg.header.stamp = rgb_frame_stamp
         label_msg.header.frame_id = rgb_frame_id
         label_msg.encoding = 'mono8'
-        self.label_pub.publish(label_msg)
+        self.posecnn_label_pub.publish(label_msg)
+
+
+        test_string_out = 'This code is cool at: {}'.format(str(rospy.get_time()))
+        self.test_pub.publish(test_string_out)
 
         ## End of part without TF-Messages
 
         # visualization
-        if cfg.TEST.VISUALIZE:
+        if self.posecnn_cfg.TEST.VISUALIZE:
             fig = plt.figure()
             ax = fig.add_subplot(2, 3, 1)
             plt.imshow(im_color)
@@ -383,7 +427,7 @@ class Poserbpf(pe.PoseEstimator):
             vertex_target = vertex_pred[0, :, :, :]
             center = np.zeros((3, height, width), dtype=np.float32)
 
-            for j in range(1, self.dataset._num_classes):
+            for j in range(1, self.posecnn_dataset._num_classes):
                 index = np.where(labels == j)
                 if len(index[0]) > 0:
                     center[0, index[0], index[1]] = vertex_target[3*j, index[0], index[1]]
@@ -403,18 +447,25 @@ class Poserbpf(pe.PoseEstimator):
 
         if not rois.shape[0]:
             return
-        
-        indexes = np.zeros((self.dataset.num_classes, ), dtype=np.int32)
+
+        self.n += 1
+
+        # tf-stuff skipped for now
+        return
+
+
+        indexes = np.zeros((self.posecnn_dataset.num_classes, ), dtype=np.int32)
         index = np.argsort(rois[:, 2])
         rois = rois[index, :]
         now = rospy.Time.now()
         markers = []
 
+
         for i in range(rois.shape[0]):
             roi = rois[i]
             cls = int(roi[1])
-            cls_name = self.dataset._classes_test[cls]
-            if cls > 0 and roi[-1] > cfg.TEST.DET_THRESHOLD:
+            cls_name = self.posecnn_dataset._classes_test[cls]
+            if cls > 0 and roi[-1] > self.posecnn_cfg.TEST.DET_THRESHOLD:
 
                 # compute mask translation
                 w = roi[4] - roi[2]
@@ -452,7 +503,7 @@ class Poserbpf(pe.PoseEstimator):
                 m = torch.mean(points, dim=0, keepdim=True)
                 mpoints = m.repeat(n, 1)
                 distance = torch.norm(points - mpoints, dim=1)
-                extent = np.mean(self.dataset._extents_test[cls, :])
+                extent = np.mean(self.posecnn_dataset._extents_test[cls, :])
                 points = points[distance < 1.5 * extent, :]
                 if points.shape[0] == 0:
                     continue
@@ -515,17 +566,18 @@ class Poserbpf(pe.PoseEstimator):
                 marker.scale.y = .05
                 marker.scale.z = .05
 
-                if cfg.TEST.ROS_CAMERA == 'Azure':
+                if self.posecnn_cfg.TEST.ROS_CAMERA == 'Azure':
                     marker.color.a = .3
-                elif cfg.TEST.ROS_CAMERA == 'D415':
+                elif self.posecnn_cfg.TEST.ROS_CAMERA == 'D415':
                     marker.color.a = 1.
-                marker.color.r = self.dataset._class_colors_test[cls][0] / 255.0
-                marker.color.g = self.dataset._class_colors_test[cls][1] / 255.0
-                marker.color.b = self.dataset._class_colors_test[cls][2] / 255.0
+                marker.color.r = self.posecnn_dataset._class_colors_test[cls][0] / 255.0
+                marker.color.g = self.posecnn_dataset._class_colors_test[cls][1] / 255.0
+                marker.color.b = self.posecnn_dataset._class_colors_test[cls][2] / 255.0
                 markers.append(marker)
 
+        print('markers: ', len(markers))
         self.viz_pub.publish(MarkerArray(markers))
 
 
-        self.n += 1
+        # self.n += 1
 

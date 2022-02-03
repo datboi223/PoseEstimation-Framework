@@ -66,20 +66,14 @@ def PoseEstimatorFactory(estimator, parameter):
     for idx, p in enumerate(sys.path):
         print('Path {}: {}'.format(idx, p))
 
-    # imports placed here to avoid circular import
-    import cosypose_estimator.cosypose_estimator as cp  # the whole program
-    import poserbpf_estimator.poserbpf_estimator as pr  # the class
-    
-    # import cosypose
-    # print(cosypose.__file__)
-    # exit()
-
     if estimator == 'cosypose':
+        import cosypose_estimator.cosypose_estimator as cp
         print('Creating Cosypose!')
         return cp.Cosypose(parameter)
     elif estimator == 'PoseRBPF':
+        import poserbpf_estimator.poserbpf_estimator as pr
         print('Creating PoseRBPF!')
-        return pr.PoseRBPF(parameter)
+        return pr.Poserbpf(parameter)
     else:
         print('No valid pose estimator specified. Aborting!')
         exit(-1)
@@ -95,19 +89,15 @@ if __name__ == '__main__':
     print(args)
 
     # load the config/parameters for the approach you want to use
-    cfg = load_config(args.param)
+    # scfg = load_config(args.param)
 
     rospy.init_node('pose_est')
 
-    pose_estimator = PoseEstimatorFactory(estimator=args.estimator, parameter=cfg)
+    try:
+        pose_estimator = PoseEstimatorFactory(estimator=args.estimator, parameter=args.param)
+    except Exception as e:
+        print(e)
+        sys.exit()
 
     while not rospy.is_shutdown():
-        try:
-            pose_estimator.evaluate()
-        except Exception as e:
-            print('Program stopped! -> ', e)
-            ps = os.getpgid(0)
-            os.killpg(ps, signal.SIGTERM)
-            time.sleep(3)
-            os.killpg(ps, signal.SIGKILL)
-            exit(-1)
+        pose_estimator.evaluate()

@@ -43,8 +43,8 @@ from scipy.spatial.transform import Rotation as Rot
 
 
 # importing the cosypose-"backend"
-# sys.path.append(os.environ['COSYPOSE_HOME'])
-# print('COSYPOSE_HOME: ', os.environ['COSYPOSE_HOME'])
+sys.path.append(os.environ['COSYPOSE_HOME'])
+print('COSYPOSE_HOME: ', os.environ['COSYPOSE_HOME'])
 
 
 # TODO: fix the dependencies/imports
