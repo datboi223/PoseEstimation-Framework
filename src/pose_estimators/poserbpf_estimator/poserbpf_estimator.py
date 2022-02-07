@@ -42,7 +42,9 @@ from std_msgs.msg import String
 from sensor_msgs.msg import Image as ROS_Image
 from sensor_msgs.msg import CameraInfo
 from sensor_msgs.msg import JointState
-from transforms3d.quaternions import mat2quat, quat2mat, qmult
+from transforms3d.quaternions import mat2quat, quat2mat, qmult, qinverse
+from transforms3d.euler import quat2euler, mat2euler, euler2quat
+
 from utils.render_utils import render_image_detection
 from scipy.optimize import minimize
 from geometry_msgs.msg import PoseStamped, PoseArray
@@ -112,6 +114,32 @@ def get_relative_pose_from_tf(listener, source_frame, target_frame):
                 first_time = False
             continue
     return ros_qt_to_rt(init_rot, init_trans), stamp
+
+def allocentric2egocentric(qt, T):
+    ''' Fuction from se3.py of `PoseCNN-Python` '''
+    dx = np.arctan2(T[0], -T[2])
+    dy = np.arctan2(T[1], -T[2])
+    quat = euler2quat(-dy, -dx, 0, axes='sxyz')
+    quat = qmult(quat, qt)
+    return quat
+
+def compute_poses(out_pose, out_quaternion, rois):
+    '''Computing the WHOLE POSE from PoseCNN'''
+    num = rois.shape[0]
+    poses = out_pose.copy()
+    for j in range(num):
+        cls = int(rois[j, 1])
+        if cls >= 0:
+            qt = out_quaternion[j, 4 * cls:4 * cls + 4]
+            qt = qt / np.linalg.norm(qt)
+            # allocentric to egocentric
+            poses[j, 4] *= poses[j, 6]
+            poses[j, 5] *= poses[j, 6]
+            T = poses[j, 4:]
+            poses[j, :4] = allocentric2egocentric(qt, T)
+    print('poses = ', poses.shape, '\n', poses)
+    return poses
+
 
 '''PoseRBPF similar to ImageListener from PoseRBPF'''
 
@@ -370,11 +398,27 @@ class Poserbpf(pe.PoseEstimator):
         mask_depth_valid = torch.isfinite(depth_meas_roi)
 
         # forward
-        self.posecnn_cfg.TRAIN.POSE_REG = False
-        out_label, out_vertex, rois, out_pose = self.posecnn_net(inputs, self.label_blob,  self.meta_data_blob,
-                                                                 self.extents_blob, self.gt_boxes_blob,
-                                                                 self.poses_blob, self.points_blob,
-                                                                 self.symmetry_blob)
+        # self.posecnn_cfg.TRAIN.POSE_REG = False
+
+        print('self.posecnn_cfg.TRAIN.POSE_REG = ', self.posecnn_cfg.TRAIN.POSE_REG)
+
+        if self.posecnn_cfg.TRAIN.POSE_REG:
+            print('Pose + Quat.')
+            out_label, out_vertex, rois, out_pose, out_quaternion = self.posecnn_net(inputs, self.label_blob,
+                                                                                     self.meta_data_blob,
+                                                                                     self.extents_blob,
+                                                                                     self.gt_boxes_blob,
+                                                                                     self.poses_blob,
+                                                                                     self.points_blob,
+                                                                                     self.symmetry_blob)
+            # print('out_pose = ', out_pose.shape, '\n', out_pose)
+            # print('out_quat = ', out_quaternion.shape, '\n', out_quaternion)
+        else:
+            print('Pose Only')
+            out_label, out_vertex, rois, out_pose = self.posecnn_net(inputs, self.label_blob, self.meta_data_blob,
+                                                                     self.extents_blob, self.gt_boxes_blob,
+                                                                     self.poses_blob, self.points_blob,
+                                                                     self.symmetry_blob)
 
         label_tensor = out_label[0]
         labels = label_tensor.detach().cpu().numpy()
@@ -388,6 +432,24 @@ class Poserbpf(pe.PoseEstimator):
         # non-maximum suppression within class
         index = nms(rois, 0.2)
         rois = rois[index, :]
+
+
+        # out_poses
+        # preprocessing needed
+        print('out_pose')
+        print('out_pose = ', out_pose.shape, '\n', out_pose)
+        if self.posecnn_cfg.TRAIN.POSE_REG:
+            out_pose = out_pose.cpu().detach().numpy()
+            out_quaternion = out_quaternion.cpu().detach().numpy()
+            poses = compute_poses(out_pose, out_quaternion, rois)
+            print('poses = ', poses.shape)
+
+
+
+
+
+
+
 
         # render output image
         im_label = render_image_detection(self.posecnn_dataset, im_color, rois, labels)
