@@ -86,6 +86,15 @@ torch.backends.cudnn.benchmark = False
 sys.path.insert(0, os.environ['EST_HOME'])
 import run_pose_estimation as pe
 
+def load_config(file):
+    if not os.path.exists(file): # to be removed in final version (for testing)
+        print('Config does not exist: ', file)
+        return dict()
+    else: # load data
+        with open(file, 'r') as json_file:
+            data = json.load(json_file)
+            assert(type(data) == dict)
+        return data
 
 def show_bbox_prediction(img, bbox):
     print('bbox = ', bbox.shape)
@@ -152,6 +161,8 @@ def generate_pose_array(poses, header):
 class Cosypose(pe.PoseEstimator):
     def __init__(self, parameters):
         super().__init__(parameters)
+        parameter_path = os.path.join(os.path.dirname(__file__), parameters)
+        self.parameters = load_config(parameter_path)
         self.im = None
         self.camera_info = None
         self.model_type = self.parameters['model_type']
