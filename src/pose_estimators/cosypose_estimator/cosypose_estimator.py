@@ -122,17 +122,14 @@ def show_bbox_prediction(img, bbox):
     del ax
     plt.pause(0.001)
 
-def generate_pose_array(poses, header):
+def generate_pose_array(poses):
 
     poses_np = poses.cpu().detach().numpy()
     ps = PoseArray()
     ps.header.frame_id = "/camera_link"
 
     for i, pose_np in enumerate(poses_np):
-        print(i, ' - \n', pose_np)
-        # p = PoseStamped()
         p = Pose()
-        # p.header = header
         t = pose_np[:3, -1]
         r = Rot.from_matrix(pose_np[:3, :3])
         q = r.as_quat()  # Rotation as quaternion
@@ -145,14 +142,6 @@ def generate_pose_array(poses, header):
         p.orientation.z = q[2]
         p.orientation.w = q[3]
 
-        # p.pose.position.x = t[0]
-        # p.pose.position.y = t[1]
-        # p.pose.position.z = t[2]
-        # p.pose.orientation.x = q[0]
-        # p.pose.orientation.y = q[1]
-        # p.pose.orientation.z = q[2]
-        # p.pose.orientation.w = q[3]
-        print(p)
         ps.poses.append(p)
 
     return ps
@@ -189,13 +178,11 @@ class Cosypose(pe.PoseEstimator):
 
         self.tf_pub = None
 
-    # def initialize_subscriber(self):
-    #
-
-
-    # def initialize_publisher(self):
-    #     ''' for Publishing the estimated transformation '''
-    #     pass
+    def choose_object(self, objects='all'):
+        if objects is 'all': # no limitations on resulting data
+            self.object_class = None
+        else:
+            self.object_class = objects
 
     def preprocess(self, data: dict, parameters: dict):
         ''' Preprocessing of the data gotten (if needed) '''
@@ -220,7 +207,6 @@ class Cosypose(pe.PoseEstimator):
 
     # TODO: used in __init__
     def load_detector(self, run_id):
-        ''' TODO: replace as much as possible with the preloaded parameters '''
 
         run_dir = EXP_DIR / run_id
         cfg = yaml.load((run_dir / 'config.yaml').read_text(), Loader=yaml.FullLoader)
@@ -243,7 +229,6 @@ class Cosypose(pe.PoseEstimator):
         run_dir = EXP_DIR / coarse_run_id
         cfg = yaml.load((run_dir / 'config.yaml').read_text(), Loader=yaml.FullLoader)
         cfg = check_update_config_pose(cfg)
-        # object_ds = BOPObjectDataset(BOP_DS_DIR / 'tless/models_cad')
         object_ds = make_object_dataset(cfg.object_ds_name)
         mesh_db = MeshDataBase.from_object_ds(object_ds)
         renderer = BulletBatchRenderer(object_set=cfg.urdf_ds_name,
@@ -273,7 +258,6 @@ class Cosypose(pe.PoseEstimator):
         model = CoarseRefinePosePredictor(coarse_model=coarse_model, refiner_model=refiner_model)
         return model, mesh_db
 
-    # TODO: used in __init__
     def getModel(self, model_type):
         # load models
         if model_type == 'tless':
@@ -350,6 +334,9 @@ class Cosypose(pe.PoseEstimator):
             if pred is None or detections is None:
                 return
 
+            print('Pred: ', type(pred))
+            print('Detections: ', type(detections))
+
             cam = dict(
                 resolution=input_dim,
                 K=camera_K,
@@ -364,12 +351,12 @@ class Cosypose(pe.PoseEstimator):
                 print("object ", i, ":", pred.infos.iloc[i].label, "------\n  pose:",
                       pred.poses[i].numpy(), "\n  detection score:", pred.infos.iloc[i].score)
 
-            # print('Pred\n', pred, type(pred))
-            # print('Detections\n', detections.infos['label'], type(detections.infos['label']))
+            print('Pred\n', pred)
+            print('Detections\n', detections)
             msg_header = Header()
             msg_header.stamp = rospy.Time.now()
             msg_header.frame_id = 'measured/camera_link'
-            poses = generate_pose_array(pred.poses, msg_header)
+            poses = generate_pose_array(pred.poses)
             poses.header = msg_header
             self.pose_array_pub.publish(poses)
 
@@ -389,13 +376,11 @@ class Cosypose(pe.PoseEstimator):
             fig_array = [figures['input_im'], figures['detections'], figures['pred_rendered'], figures['pred_overlay']]
             # fig_array = [figures['input_im'], figures['detections']]
 
-            # continue
-
             res = gridplot(fig_array, ncols=2)
             print(type(res))
             out_png = os.path.join(os.environ['HOME'], 'Desktop', 'out', str(self.n) + '_result.png')
             try:
-                export_png(res, filename=out_png)
+                # export_png(res, filename=out_png)
                 pass
             except Exception as e:
                 print('Error: ', e)

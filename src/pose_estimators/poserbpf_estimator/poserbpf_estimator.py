@@ -178,6 +178,11 @@ class Poserbpf(pe.PoseEstimator):
         self.posecnn_suffix = suffix
         self.posecnn_prefix = prefix
 
+    def choose_object(self, objects='all'):
+        if objects is 'all': # no limitations on resulting data
+            self.object_class = None
+        else:
+            self.object_class = objects
 
     def initialize_poscnn(self, posecnn_parameters):
         # load config
