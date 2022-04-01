@@ -317,22 +317,6 @@ class Poserbpf(pe.PoseEstimator):
         self.points_blob = torch.from_numpy(self.posecnn_dataset._point_blob).cuda()
         self.symmetry_blob = torch.from_numpy(self.posecnn_dataset._symmetry).cuda()
 
-
-
-    def initialize_subscriber(self):
-        pass
-
-    def initialize_publisher(self):
-        pass
-
-    def preprocess(self, data: dict, parameters: dict):
-        ''' Preprocessing of the data gotten (if needed) '''
-        return data
-
-    def preprocess(self, data: dict, parameters: dict):
-        ''' Preprocessing of the data gotten (if needed) '''
-        return data
-
     def callback(self, rgb, depth):
         # self.Tbc_now, self.Tbc_stamp = get_relative_pose_from_tf(self.posecnn.listener,
         #                                                          self.camera_frame, self.base_frame)
@@ -403,7 +387,7 @@ class Poserbpf(pe.PoseEstimator):
         mask_depth_valid = torch.isfinite(depth_meas_roi)
 
         # forward
-        # self.posecnn_cfg.TRAIN.POSE_REG = False
+        self.posecnn_cfg.TRAIN.POSE_REG = False
 
         print('self.posecnn_cfg.TRAIN.POSE_REG = ', self.posecnn_cfg.TRAIN.POSE_REG)
 
@@ -448,12 +432,6 @@ class Poserbpf(pe.PoseEstimator):
             out_quaternion = out_quaternion.cpu().detach().numpy()
             poses = compute_poses(out_pose, out_quaternion, rois)
             print('poses = ', poses.shape)
-
-
-
-
-
-
 
 
         # render output image

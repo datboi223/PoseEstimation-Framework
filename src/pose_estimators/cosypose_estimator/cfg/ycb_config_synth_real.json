@@ -1,0 +1,9 @@
+{
+  "model_type": "ycb",
+  "urdf_ds":  "ycbv",
+  "run_ids": {
+    "detector": "detector-bop-ycbv-synt+real--292971",
+    "coarse": "coarse-bop-ycbv-synt+real--822463",
+    "refiner": "refiner-bop-ycbv-synt+real--631598"
+  }
+}

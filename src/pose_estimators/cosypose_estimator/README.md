@@ -40,9 +40,16 @@ This usually solves the problem.
 To use `cosypose` you also have to download the required data. For this, follow the instructions of the cosypose-repository [here](https://github.com/datboi223/cosypose#downloading-and-preparing-data). You only need to download a part of the `YCB` BOP-Dataset, but not the whole thing, since the provided download-script would download a very large amount of data. Only the data [here](https://drive.google.com/drive/folders/1LemYCKiQgdN6gv16yjs9gfEsNK_s-QJQ) and the corrssponding `URDF`-Files are needed. The aforementioned folder contains the object-models for 20 YCB-Models. Download these files to the `cosypose`-subfolder `/local_data/bop_datasets/ycbv/`. Rename the folder from its original name to `models`. Now follow the download instructions for the `URDF`-files. 
 
 Now you can download the `YCB-V` model-weights for single-view pose estimation [here](https://github.com/datboi223/cosypose#bop20-models-and-results). Follow the instructions in the __Pre-trained models__-Subsection and download the parameters with the following `model_id`-values 
-- `detector-bop-ycbv-pbr--970850`
-- `coarse-bop-ycbv-pbr--724183`
-- `refiner-bop-ycbv-pbr--604090`
+
+- __YCB-Parameter (trained on synthetic data only)__
+    - `detector-bop-ycbv-pbr--970850`
+    - `coarse-bop-ycbv-pbr--724183`
+    - `refiner-bop-ycbv-pbr--604090`
+- __YCB-Parameter (trained on synthetic and real data)__
+    - `detector-bop-ycbv-synt+real--292971`
+    - `coarse-bop-ycbv-synt+real--822463`
+    - `refiner-bop-ycbv-synt+real--631598`
+
 
 With this you should be ready to go and return to the main __[README](../../../README.md)__
 

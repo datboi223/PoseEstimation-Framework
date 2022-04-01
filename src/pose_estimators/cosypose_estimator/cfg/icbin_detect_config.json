@@ -1,0 +1,9 @@
+{
+    "model_type": "icbin-detect",
+    "urdf_ds":  "icbin",
+    "run_ids": {
+      "detector": "detector-bop-icbin-pbr--127953",
+      "coarse": "coarse-bop-ycbv-synt+real--822463",
+      "refiner": "refiner-bop-ycbv-synt+real--631598"
+    }
+  }

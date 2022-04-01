@@ -4,18 +4,15 @@
 ##  This code is composed from many files from the lib-folder of cosypose    ##
 ##                                                                           ##
 ##  Author: gezp (https://github.com/gezp) [Composition of code snippets]    ##
-##                                                               ##
+##          https://github.com/ylabbe/cosypose/issues/17                     ##
+##  Edits: Rearrangement into class + ROS-connection                         ##
 ###############################################################################
-
-# Partially taken from here (functionality/execution of cosypose)
-# https://github.com/ylabbe/cosypose/issues/17 <- Look at the code
-# New additions: putting everything inside a class and some other new methods to
-#                make it usable over ROS.
 
 import os
 import sys
 import time
 import signal
+import pickle
 import json
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches # for geometric shapes
@@ -46,8 +43,6 @@ from scipy.spatial.transform import Rotation as Rot
 sys.path.append(os.environ['COSYPOSE_HOME'])
 print('COSYPOSE_HOME: ', os.environ['COSYPOSE_HOME'])
 
-
-# TODO: fix the dependencies/imports
 from cosypose.datasets.datasets_cfg import make_scene_dataset, make_object_dataset
 
 # Pose estimator
@@ -87,9 +82,15 @@ sys.path.insert(0, os.environ['EST_HOME'])
 import run_pose_estimation as pe
 
 def load_config(file):
-    if not os.path.exists(file): # to be removed in final version (for testing)
+    '''
+        Function for loading the given configuration-file that initializes the
+        6D pose-estimation class
+        :return: dict-object with initializazion-parameter
+        :param file: json-file
+    '''
+    if not os.path.exists(file):
         print('Config does not exist: ', file)
-        return dict()
+        exit()
     else: # load data
         with open(file, 'r') as json_file:
             data = json.load(json_file)
@@ -123,7 +124,12 @@ def show_bbox_prediction(img, bbox):
     plt.pause(0.001)
 
 def generate_pose_array(poses):
-
+    '''
+        Converts the detected 6D Poses to Pose-Messages and
+        puts them into a PoseArray-Message
+        :param poses: torch.tensor of all detected poses
+        :return:      PoseArray-Message of all detected poses
+    '''
     poses_np = poses.cpu().detach().numpy()
     ps = PoseArray()
     ps.header.frame_id = "/camera_link"
@@ -146,33 +152,48 @@ def generate_pose_array(poses):
 
     return ps
 
-# TODO: adaption of the code to be used in class instead of separate functions
+def save_predictions(pred, detections, out_name):
+    '''
+        Utility-Function for saving all predictions/detections as Pickle-File
+        Saving as PNG is not done her.
+        :param pred:        Data-Structure of all predictions
+        :param detections:  Data-Structure of all detections
+        :param out_name:    Name of Pickle-File to save to
+        :return:            None
+    '''
+    out_name = out_name.replace('.png', '.pkl')
+    data = {'name': out_name.replace('.pkl', ''), 'pred': pred, 'detections': detections }
+    with open(out_name, "wb") as results_file:
+        pickle.dump(data, results_file, protocol=pickle.HIGHEST_PROTOCOL)
+
+
 class Cosypose(pe.PoseEstimator):
-    def __init__(self, parameters):
+    def __init__(self, parameters, visualize):
         super().__init__(parameters)
-        parameter_path = os.path.join(os.path.dirname(__file__), parameters)
+        parameter_path = os.path.join(os.path.dirname(__file__), 'cfg', parameters)
         self.parameters = load_config(parameter_path)
+        self.visualize = visualize
         self.im = None
         self.camera_info = None
         self.model_type = self.parameters['model_type']
         self.detector, self.pose_predictor = self.getModel(self.model_type)
 
         self.bridge = CvBridge()
-        self.renderer = BulletSceneRenderer(urdf_ds='ycbv')
+        self.renderer = BulletSceneRenderer(urdf_ds=self.parameters['urdf_ds'])
 
         # Init. of publisher
-        # self.pose_publisher = tf.TransformBroadcaster()
         self.object_class_pub = rospy.Publisher('/object_classes', String, queue_size=1)
         self.pose_array_pub = rospy.Publisher('/object_poses', PoseArray, queue_size=1)
 
         # initialization of relevant subscribers (only) for cosypose
-        self.rgb_sub = message_filters.Subscriber('/camera/color/image_raw', Image, queue_size=10)  # 10
-        self.camera_sub = message_filters.Subscriber('/camera/color/camera_info', CameraInfo, queue_size=10)  # 10
+        self.rgb_sub = message_filters.Subscriber('/camera/color/image_raw', Image, queue_size=1)  # 10
+        self.camera_sub = message_filters.Subscriber('/camera/color/camera_info', CameraInfo, queue_size=1)  # 10
         queue_size = 5
         slop_seconds = 0.1  # 0.1
         sync = message_filters.ApproximateTimeSynchronizer([self.rgb_sub,
                                                             self.camera_sub],
                                                            queue_size, slop_seconds)
+        print('sync.registerCallback(self.callback)')
         sync.registerCallback(self.callback)
         print('Waiting for Messages')
 
@@ -183,10 +204,6 @@ class Cosypose(pe.PoseEstimator):
             self.object_class = None
         else:
             self.object_class = objects
-
-    def preprocess(self, data: dict, parameters: dict):
-        ''' Preprocessing of the data gotten (if needed) '''
-        return data
 
     def callback(self, rgb_msg, camera_msg):
         # get the rgb-data
@@ -205,9 +222,11 @@ class Cosypose(pe.PoseEstimator):
             self.im = cv_rgb_image.copy()
             self.camera_info = camera_message
 
-    # TODO: used in __init__
+    # used in __init__
     def load_detector(self, run_id):
-
+        '''
+            Load detection-model for object-detection
+        '''
         run_dir = EXP_DIR / run_id
         cfg = yaml.load((run_dir / 'config.yaml').read_text(), Loader=yaml.FullLoader)
         cfg = check_update_config_detector(cfg)
@@ -222,10 +241,11 @@ class Cosypose(pe.PoseEstimator):
         model = Detector(model)
         return model
 
-    # TODO: used in __init__
+    # used in __init__
     def load_pose_models(self, coarse_run_id, refiner_run_id=None, n_workers=8):
-        ''' TODO: replace as much as possible with the preloaded parameters '''
-
+        '''
+            Load models for pose-estimation for coarse and refined estimatio
+        '''
         run_dir = EXP_DIR / coarse_run_id
         cfg = yaml.load((run_dir / 'config.yaml').read_text(), Loader=yaml.FullLoader)
         cfg = check_update_config_pose(cfg)
@@ -236,6 +256,9 @@ class Cosypose(pe.PoseEstimator):
         mesh_db_batched = mesh_db.batched().cuda()
 
         def load_model(run_id):
+            '''
+                Utility-Function that loads pose-estimation-models
+            '''
             if run_id is None:
                 return
             run_dir = EXP_DIR / run_id
@@ -259,11 +282,15 @@ class Cosypose(pe.PoseEstimator):
         return model, mesh_db
 
     def getModel(self, model_type):
-        # load models
+        '''
+            Load all model-parameter given a specific dataset-name, on which the parameters were trained on
+            Redundant: TODO: Remove
+        '''
         if model_type == 'tless':
-            detector_run_id = self.parameters['run_ids']['detector'] # 'detector-bop-tless-pbr--873074'
-            coarse_run_id = self.parameters['run_ids']['coarse']     # 'coarse-bop-tless-pbr--506801'
-            refiner_run_id = self.parameters['run_ids']['refiner']   # 'refiner-bop-tless-pbr--233420'
+            detector_run_id = self.parameters['run_ids']['detector']
+            coarse_run_id = self.parameters['run_ids']['coarse']
+            refiner_run_id = self.parameters['run_ids']['refiner']
+
             detector = self.load_detector(detector_run_id)
             pose_predictor, mesh_db = self.load_pose_models(coarse_run_id=coarse_run_id,
                                                             refiner_run_id=refiner_run_id,
@@ -271,40 +298,47 @@ class Cosypose(pe.PoseEstimator):
             return detector, pose_predictor
 
         if model_type == 'ycb':
-            detector_run_id = self.parameters['run_ids']['detector'] # 'detector-bop-ycbv-pbr--970850'
-            coarse_run_id = self.parameters['run_ids']['coarse']     # 'coarse-bop-ycbv-pbr--724183'
-            refiner_run_id = self.parameters['run_ids']['refiner']   # 'refiner-bop-ycbv-pbr--604090'
+            detector_run_id = self.parameters['run_ids']['detector']
+            coarse_run_id = self.parameters['run_ids']['coarse']
+            refiner_run_id = self.parameters['run_ids']['refiner']
             detector = self.load_detector(detector_run_id)
             pose_predictor, mesh_db = self.load_pose_models(coarse_run_id=coarse_run_id,
                                                             refiner_run_id=refiner_run_id,
-                                                            n_workers=1)
+                                                            n_workers=4)
             return detector, pose_predictor
 
-    # TODO: used in evaluate()
+        if model_type == 'icbin-detect':
+            detector_run_id = self.parameters['run_ids']['detector']
+            coarse_run_id = self.parameters['run_ids']['coarse']
+            refiner_run_id = self.parameters['run_ids']['refiner']
+            detector = self.load_detector(detector_run_id)
+            pose_predictor, mesh_db = self.load_pose_models(coarse_run_id=coarse_run_id,
+                                                            refiner_run_id=refiner_run_id,
+                                                            n_workers=4)
+            return detector, pose_predictor
+
     def inference(self, detector, pose_predictor, image, camera_k):
-        # [1,540,720,3]->[1,3,540,720]
         images = torch.from_numpy(image).cuda().float().unsqueeze_(0)
         images = images.permute(0, 3, 1, 2) / 255
-        # [1,3,3]
         cameras_k = torch.from_numpy(camera_k).cuda().float().unsqueeze_(0)
+
         # 2D detector
-        # print("start detect object.")
         box_detections = detector.get_detections(images=images,
                                                  one_instance_per_class=False,
                                                  detection_th=0.8,
                                                  output_masks=False,
                                                  mask_th=0.9)
         print('#Predictions: ', len(box_detections))
-        # pose estimation
         if len(box_detections) == 0:
             return None, None
-        # print("start estimate pose.")
+
+        # pose-estimation
         final_preds, all_preds = pose_predictor.get_predictions(images,
                                                                 cameras_k,
                                                                 detections=box_detections,
                                                                 n_coarse_iterations=4,
                                                                 n_refiner_iterations=4)
-        # result: this_batch_detections, final_preds
+
         return final_preds.cpu(), box_detections
 
     def evaluate(self):
@@ -327,22 +361,10 @@ class Cosypose(pe.PoseEstimator):
                                               image=im_color, camera_k=camera_K)
             end = time.time()
             print('Inference Time: {:.3f} s'.format(end - start))
-            # print('pred = ', pred)
-            # print('detections = ', detections)
 
             # end current iteration, if there was nothing detected (pred and/or detections == None)
             if pred is None or detections is None:
                 return
-
-            print('Pred: ', type(pred))
-            print('Detections: ', type(detections))
-
-            cam = dict(
-                resolution=input_dim,
-                K=camera_K,
-                TWC=np.eye(4)
-            )
-            pred_rendered = render_prediction_wrt_camera(self.renderer, pred, cam)
 
             # Print the predictions
             print('n = ', self.n)
@@ -356,37 +378,48 @@ class Cosypose(pe.PoseEstimator):
             msg_header = Header()
             msg_header.stamp = rospy.Time.now()
             msg_header.frame_id = 'measured/camera_link'
+
+            # Publishing PoseArray-Message
             poses = generate_pose_array(pred.poses)
             poses.header = msg_header
             self.pose_array_pub.publish(poses)
 
+            # Publishing String-Message of classes (","-separated)
             pred_classes = detections.infos['label'].tolist()
             pred_classes_str = ','.join(pred_classes)
             self.object_class_pub.publish(pred_classes_str)
             # print('pred_classes_str = ', pred_classes_str)
 
-            figures = dict()
-            plotter = Plotter()
 
-            figures['input_im'] = plotter.plot_image(im_color)
-            img_det = plotter.plot_image(im_color)
-            figures['detections'] = plotter.plot_maskrcnn_bboxes(img_det, detections)
-            figures['pred_rendered'] = plotter.plot_image(pred_rendered)
-            figures['pred_overlay'] = plotter.plot_overlay(im_color, pred_rendered)
-            fig_array = [figures['input_im'], figures['detections'], figures['pred_rendered'], figures['pred_overlay']]
-            # fig_array = [figures['input_im'], figures['detections']]
+            if self.visualize:
+                # Visualization and Saving of Predictions
+                cam = dict(
+                    resolution=input_dim,
+                    K=camera_K,
+                    TWC=np.eye(4)
+                )
+                pred_rendered = render_prediction_wrt_camera(self.renderer, pred, cam)
 
-            res = gridplot(fig_array, ncols=2)
-            print(type(res))
-            out_png = os.path.join(os.environ['HOME'], 'Desktop', 'out', str(self.n) + '_result.png')
-            try:
-                # export_png(res, filename=out_png)
-                pass
-            except Exception as e:
-                print('Error: ', e)
-            # show_bbox_prediction(im_color, detections.tensors['bboxes'])
-            # if self.n > 10:
-            #     raise Exception('ITS TIME TO STOP!')
+                figures = dict()
+                plotter = Plotter()
+
+                figures['input_im'] = plotter.plot_image(im_color)
+                img_det = plotter.plot_image(im_color)
+                figures['detections'] = plotter.plot_maskrcnn_bboxes(img_det, detections)
+                figures['pred_rendered'] = plotter.plot_image(pred_rendered)
+                figures['pred_overlay'] = plotter.plot_overlay(im_color, pred_rendered)
+                fig_array = [figures['input_im'], figures['detections'], figures['pred_rendered'], figures['pred_overlay']]
+                # fig_array = [figures['input_im'], figures['detections']]
+
+                res = gridplot(fig_array, ncols=2)
+                print(type(res))
+                out_png = os.path.join(os.environ['HOME'], 'Desktop', 'out', str(self.n) + '_result.png')
+                try:
+                    export_png(res, filename=out_png)
+                    save_predictions(pred, detections, out_png)
+                    pass
+                except Exception as e:
+                    print('Error during saving: ', e)
 
             self.n += 1
 

@@ -1,5 +1,6 @@
 {
   "model_type": "ycb",
+  "urdf_ds":  "ycbv",
   "run_ids": {
     "detector": "detector-bop-ycbv-pbr--970850",
     "coarse": "coarse-bop-ycbv-pbr--724183",

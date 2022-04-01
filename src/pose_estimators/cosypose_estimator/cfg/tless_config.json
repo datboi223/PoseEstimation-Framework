@@ -1,5 +1,6 @@
 {
     "model_type": "tless",
+    "urdf_ds":  "tless",
     "run_ids": {
       "detector": "detector-bop-tless-pbr--873074",
       "coarse": "coarse-bop-tless-pbr--506801",
