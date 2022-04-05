@@ -228,7 +228,7 @@ class Cosypose(pe.PoseEstimator):
             Load detection-model for object-detection
         '''
         run_dir = EXP_DIR / run_id
-        cfg = yaml.load((run_dir / 'config.yaml').read_text(), Loader=yaml.FullLoader)
+        cfg = yaml.load((run_dir / 'config.yaml').read_text(), Loader=yaml.UnsafeLoader)
         cfg = check_update_config_detector(cfg)
         label_to_category_id = cfg.label_to_category_id
         model = create_model_detector(cfg, len(label_to_category_id))
@@ -247,7 +247,7 @@ class Cosypose(pe.PoseEstimator):
             Load models for pose-estimation for coarse and refined estimatio
         '''
         run_dir = EXP_DIR / coarse_run_id
-        cfg = yaml.load((run_dir / 'config.yaml').read_text(), Loader=yaml.FullLoader)
+        cfg = yaml.load((run_dir / 'config.yaml').read_text(), Loader=yaml.UnsafeLoader)
         cfg = check_update_config_pose(cfg)
         object_ds = make_object_dataset(cfg.object_ds_name)
         mesh_db = MeshDataBase.from_object_ds(object_ds)
@@ -262,7 +262,7 @@ class Cosypose(pe.PoseEstimator):
             if run_id is None:
                 return
             run_dir = EXP_DIR / run_id
-            cfg = yaml.load((run_dir / 'config.yaml').read_text(), Loader=yaml.FullLoader)
+            cfg = yaml.load((run_dir / 'config.yaml').read_text(), Loader=yaml.UnsafeLoader)
             cfg = check_update_config_pose(cfg)
             if cfg.train_refiner:
                 model = create_model_refiner(cfg, renderer=renderer, mesh_db=mesh_db_batched)

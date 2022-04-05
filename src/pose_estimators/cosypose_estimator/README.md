@@ -7,8 +7,8 @@ Clone the __[cosypose](https://github.com/datboi223/cosypose)__-repository with 
 ```bash
 git clone --recurse-submodules https://github.com/datboi223/cosypose.git
 cd cosypose
-conda env create -n cosypose --file environment.yaml
-conda activate cosypose
+conda env create -n cosypose_ros --file environment_ros.yaml
+conda activate cosypose_ros
 git lfs pull
 ```
 
@@ -17,6 +17,12 @@ To finally install cosypose you have to use the following command:
 ```bash
 python setup.py install
 python setup.py develop
+```
+
+To check if `Pybullet` and `PyTorch` are installed in the `Conda`-Environment, execute the following lines
+```bash
+conda install pytorch=1.3.1=py3.7_cuda10.1.243_cudnn7.6.3_0
+pip install pybullet==2.5.5
 ```
 
 For the program [transforms.py](https://github.com/datboi223/cosypose/blob/master/cosypose/lib3d/transform.py) to work, you also have to insall `eigenpy`, if it is not already installed. Try to run pose-estimation with `cosypose` before installing `eigenpy` to see, if it is already working. If yes, you can skip the following Install-Instructions.
@@ -52,5 +58,3 @@ Now you can download the `YCB-V` model-weights for single-view pose estimation [
 
 
 With this you should be ready to go and return to the main __[README](../../../README.md)__
-
-## TODO: synth+real weights
