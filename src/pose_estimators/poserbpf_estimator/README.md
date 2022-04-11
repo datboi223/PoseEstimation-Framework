@@ -5,17 +5,15 @@ would only work with Python 2.7. However, it is possible to use the two componen
 Pose-Estimation-method with Python 3 and ROS-Noetic.
 
 To use PoseCNN and Pose follow the instructions below
-Clone the Git-Repositry
-```bash
-git clone https://github.com/NVlabs/PoseRBPF.git --recursive
-```
 
 # Installation
 Get the `PoseRBPF`-Repository from here 
 ```bash
-git clone https://github.com/NVlabs/PoseRBPF.git --recursive
+git clone https://github.com/datboi223/PoseRBPF.git --recursive
 ```
 To install all dependencies and the program itself follow the instructions __[here](https://github.com/datboi223/PoseRBPF#online-real-world-pose-estimation-using-ros-noetic-and-python-3)__.
+
+__Important:__ When installing the YCB-Renderer inside the Conda-Environment, a non-Conda version of CUDA has to be present on the computer, in order to compile the program. Compilation was successfully tested with `CUDA 11.3` and `CUDA 11.4 Update 4`.
 
 You now have to download the parameters for Pose-Estimation of `YCB-Objects`. You can find these parameters 
 __[here](https://github.com/datboi223/PoseRBPF#download)__. Place the downloaded files in the directory specified in the 
@@ -27,3 +25,4 @@ order to load the downloaded model-parameters and relevant config-file.
 ln -s /path/to/PoseRBPF/checkpoints/ checkpoints
 ln -s /path/to/PoseRBPF/config config
 ```
+Other than `cosypose`, the current state of `PoseRBPF` only works inside the `PyCharms`-IDE, because there is currently a problem with the anaconda environment.
