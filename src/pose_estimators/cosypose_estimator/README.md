@@ -1,11 +1,11 @@
 # 6D Pose-Estimation with Cosypose
 
-In order to use the __[cosypose](https://github.com/datboi223/cosypose)__-approach for 6D-Pose Estimation you get the code first and install it. This directory utilizes the single-view version of cosypose to estimate the translation and rotaton and rotation, relative to the camera that was used to observe the scene.
+In order to use the __[cosypose](https://github.com/joweyel/cosypose)__-approach for 6D-Pose Estimation you get the code first and install it. This directory utilizes the single-view version of cosypose to estimate the translation and rotaton and rotation, relative to the camera that was used to observe the scene.
 
 ## Installation
-Clone the __[cosypose](https://github.com/datboi223/cosypose)__-repository with the first statement below and follow the further instructions inside the root-folder of that repository
+Clone the __[cosypose](https://github.com/joweyel/cosypose)__-repository with the first statement below and follow the further instructions inside the root-folder of that repository
 ```bash
-git clone --recurse-submodules https://github.com/datboi223/cosypose.git
+git clone --recurse-submodules https://github.com/joweyel/cosypose.git
 cd cosypose
 conda env create -n cosypose_ros --file environment_ros.yaml
 conda activate cosypose_ros
@@ -25,7 +25,7 @@ conda install pytorch=1.3.1=py3.7_cuda10.1.243_cudnn7.6.3_0
 pip install pybullet==2.5.5
 ```
 
-For the program [transforms.py](https://github.com/datboi223/cosypose/blob/master/cosypose/lib3d/transform.py) to work, you also have to insall `eigenpy`, if it is not already installed. Try to run pose-estimation with `cosypose` before installing `eigenpy` to see, if it is already working. If yes, you can skip the following Install-Instructions.
+For the program [transforms.py](https://github.com/joweyel/cosypose/blob/master/cosypose/lib3d/transform.py) to work, you also have to insall `eigenpy`, if it is not already installed. Try to run pose-estimation with `cosypose` before installing `eigenpy` to see, if it is already working. If yes, you can skip the following Install-Instructions.
 
 For installing `eigenpy` follow these instructions
 ```bash
@@ -43,9 +43,9 @@ This usually solves the problem.
 
 ## Downloading the Data (YCB-Video)
 
-To use `cosypose` you also have to download the required data. For this, follow the instructions of the cosypose-repository [here](https://github.com/datboi223/cosypose#downloading-and-preparing-data). You only need to download a part of the `YCB` BOP-Dataset, but not the whole thing, since the provided download-script would download a very large amount of data. Only the data [here](https://drive.google.com/drive/folders/1LemYCKiQgdN6gv16yjs9gfEsNK_s-QJQ) and the corrssponding `URDF`-Files are needed. The aforementioned folder contains the object-models for 20 YCB-Models. Download these files to the `cosypose`-subfolder `/local_data/bop_datasets/ycbv/`. Rename the folder from its original name to `models`. Now follow the download instructions for the `URDF`-files. 
+To use `cosypose` you also have to download the required data. For this, follow the instructions of the cosypose-repository [here](https://github.com/joweyel/cosypose#downloading-and-preparing-data). You only need to download a part of the `YCB` BOP-Dataset, but not the whole thing, since the provided download-script would download a very large amount of data. Only the data [here](https://drive.google.com/drive/folders/1LemYCKiQgdN6gv16yjs9gfEsNK_s-QJQ) and the corrssponding `URDF`-Files are needed. The aforementioned folder contains the object-models for 20 YCB-Models. Download these files to the `cosypose`-subfolder `/local_data/bop_datasets/ycbv/`. Rename the folder from its original name to `models`. Now follow the download instructions for the `URDF`-files. 
 
-Now you can download the `YCB-V` model-weights for single-view pose estimation [here](https://github.com/datboi223/cosypose#bop20-models-and-results). Follow the instructions in the __Pre-trained models__-Subsection and download the parameters with the following `model_id`-values 
+Now you can download the `YCB-V` model-weights for single-view pose estimation [here](https://github.com/joweyel/cosypose#bop20-models-and-results). Follow the instructions in the __Pre-trained models__-Subsection and download the parameters with the following `model_id`-values 
 
 - __YCB-Parameter (trained on synthetic data only)__
     - `detector-bop-ycbv-pbr--970850`
